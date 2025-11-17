@@ -5,10 +5,10 @@ import { db } from '../firebase/config';
 
 const tabs = [
   { key: 'overview', label: 'Dashboard' },
+  { key: 'history', label: 'Geçmiş' },
+  { key: 'leaderboard', label: 'Sıralama' },
   { key: 'announcements', label: 'Duyurular' },
   { key: 'market', label: 'Piyasa' },
-  { key: 'leaderboard', label: 'Sıralama' },
-  { key: 'history', label: 'Geçmiş' },
   { key: 'profile', label: 'Profil' },
 ];
 
