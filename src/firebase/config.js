@@ -6,14 +6,15 @@ import { getFirestore } from "firebase/firestore";
 import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 
 // Your web app's Firebase configuration
+// Load from environment variables for security
 const firebaseConfig = {
-  apiKey: "AIzaSyC6phzdn2txoMd_Jur5eLKgu486VjA2qMY",
-  authDomain: "yatirimv3.firebaseapp.com",
-  projectId: "yatirimv3",
-  storageBucket: "yatirimv3.firebasestorage.app",
-  messagingSenderId: "413994394319",
-  appId: "1:413994394319:web:03e89e896a243558ef0dba",
-  measurementId: "G-ZSDSB33KGB"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
