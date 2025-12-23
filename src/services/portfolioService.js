@@ -87,24 +87,9 @@ export const getLatestSettledWeek = async () => {
     }
   }
   
-  // If no settled weeks found, let's check what weeks exist
-  console.warn('No settled weeks found, checking all weeks...');
-  try {
-    const allWeeksSnap = await getDocs(ref);
-    const allWeeks = allWeeksSnap.docs.map(d => d.data());
-    console.log(`Found ${allWeeks.length} total weeks:`, allWeeks.map(w => ({ id: w.id, status: w.status })));
-    
-    // If no settled weeks, try to find the most recent week regardless of status
-    if (allWeeks.length > 0) {
-      const sorted = allWeeks.sort((a, b) => (b?.endDate?.toMillis?.() || 0) - (a?.endDate?.toMillis?.() || 0));
-      const latest = sorted[0];
-      console.log('Using most recent week as fallback:', latest.id, 'status:', latest.status);
-      return latest;
-    }
-  } catch (e) {
-    console.error('Error checking all weeks:', e);
-  }
-  
+  // IMPORTANT: Only return settled weeks. Do NOT fallback to non-settled weeks.
+  // Components should show "no data" rather than showing incomplete/active week data.
+  console.warn('No settled weeks found. Returning null to prevent showing active week data.');
   return null;
 };
 

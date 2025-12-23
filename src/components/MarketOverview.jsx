@@ -40,15 +40,25 @@ const MarketOverview = () => {
     );
   };
 
+  // Extract all instruments from market data (exclude metadata fields)
+  const reservedFields = new Set(['window', 'fetchedAt', 'createdAt', 'updatedAt', 'tz', 'source', 'pairs']);
+  const instruments = md ? Object.keys(md)
+    .filter(key => !reservedFields.has(key) && md[key] && typeof md[key] === 'object' && (md[key].open != null || md[key].close != null))
+    .map(key => ({ symbol: key, data: md[key] }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol)) : [];
+
   return (
     <div className="info-card">
       <h3>Market Overview <Badge>Week {weekId}</Badge></h3>
       {!md ? (
         <p style={{ color: '#6c757d' }}>No market data available.</p>
+      ) : instruments.length === 0 ? (
+        <p style={{ color: '#6c757d' }}>No instrument data available.</p>
       ) : (
         <div>
-          <Row sym="AAPL" rec={md.AAPL} />
-          <Row sym="TSLA" rec={md.TSLA} />
+          {instruments.map(({ symbol, data }) => (
+            <Row key={symbol} sym={symbol} rec={data} />
+          ))}
           {md.window && (
             <p style={{ color: '#6c757d', marginTop: 8 }}>Window: {md.window.period1} → {md.window.period2} (UTC)</p>
           )}

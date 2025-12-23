@@ -125,6 +125,31 @@ async function getEffectiveMarket(weekId) {
   return result;
 }
 
+// Calculate weighted return for all instruments in user allocation
+function calculateWeightedReturn(pairs, marketData) {
+  if (!pairs || typeof pairs !== 'object') return 0;
+  if (!marketData || typeof marketData !== 'object') return 0;
+  
+  let totalWeight = 0;
+  let weightedReturn = 0;
+  
+  // Iterate through all pairs in user allocation
+  for (const [symbol, weight] of Object.entries(pairs)) {
+    const w = Number(weight) || 0;
+    if (w <= 0) continue;
+    
+    // Get market return for this symbol
+    const marketReturn = marketData[symbol]?.returnPct;
+    if (typeof marketReturn !== 'number') continue;
+    
+    totalWeight += w;
+    weightedReturn += w * marketReturn;
+  }
+  
+  // Return weighted average, or 0 if no valid weights
+  return totalWeight > 0 ? weightedReturn / totalWeight : 0;
+}
+
 // Compute Monday 00:00 UTC for the week containing the provided date
 function getMondayUTC(date = new Date()) {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -316,26 +341,35 @@ exports.settleWeek = functions.pubsub.schedule('45 23 * * FRI').timeZone('Europe
     const alloc = doc.data();
     const uid = alloc.uid;
     processedUids.add(uid);
-    const baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     
     // Get actual previous week end balance from weeklyBalances collection
+    // This is the correct baseBalance for this week, not the stored baseBalance
     const prevWeekId = getPrevISOWeekId(weekId);
+    let baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     let prevWeekEndBalance = baseBalance; // fallback to current baseBalance
     
     try {
       const prevWbRef = db.collection('weeklyBalances').doc(`${prevWeekId}_${uid}`);
       const prevWbSnap = await prevWbRef.get();
       if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
+        // Use previous week's endBalance as the baseBalance for this week
         prevWeekEndBalance = prevWbSnap.data().endBalance;
+        baseBalance = prevWeekEndBalance; // Correct the baseBalance to use previous week's end
+      } else {
+        // Fallback: check if previous week allocation has endBalance (if settled but weeklyBalances missing)
+        const prevAllocRef = db.collection('allocations').doc(`${prevWeekId}_${uid}`);
+        const prevAllocSnap = await prevAllocRef.get();
+        if (prevAllocSnap.exists && prevAllocSnap.data()?.endBalance != null) {
+          prevWeekEndBalance = prevAllocSnap.data().endBalance;
+          baseBalance = prevWeekEndBalance;
+        }
       }
     } catch (e) {
       console.warn(`Could not fetch prev week balance for ${uid} in week ${prevWeekId}:`, e);
     }
     
-    // Weighted return
-    const tslaW = alloc.pairs?.TSLA ?? 0;
-    const aaplW = alloc.pairs?.AAPL ?? 0;
-    const retPct = (tslaW * (md.TSLA?.returnPct ?? 0) + aaplW * (md.AAPL?.returnPct ?? 0)) / Math.max(tslaW + aaplW, 1);
+    // Weighted return for all instruments
+    const retPct = calculateWeightedReturn(alloc.pairs, md);
     const endBalance = baseBalance * (1 + retPct / 100);
     
     // Calculate week-over-week percentage based on actual previous week end balance
@@ -447,10 +481,35 @@ exports.submitAllocation = functions.https.onCall(async (data, context) => {
   const week = weekSnap.data();
   if (week.status !== 'open') throw new functions.https.HttpsError('failed-precondition', 'Allocation window is not open');
 
-  const sum = (pairs.TSLA || 0) + (pairs.AAPL || 0);
+  // Calculate sum of all pairs (not just TSLA/AAPL)
+  const sum = Object.values(pairs || {}).reduce((acc, val) => acc + (Number(val) || 0), 0);
   if (Math.abs(sum - 1) > 1e-6) throw new functions.https.HttpsError('invalid-argument', 'Weights must sum to 1');
 
-  const baseBalance = await ensureBalance(uid);
+  // Get baseBalance from previous week's endBalance if available
+  // This ensures the balance chain continues correctly from week to week
+  let baseBalance = await ensureBalance(uid);
+  const prevWeekId = getPrevISOWeekId(weekId);
+  
+  // Try to get previous week's endBalance from weeklyBalances
+  try {
+    const prevWbRef = db.collection('weeklyBalances').doc(`${prevWeekId}_${uid}`);
+    const prevWbSnap = await prevWbRef.get();
+    if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
+      // Use previous week's end balance as the base for this week
+      baseBalance = prevWbSnap.data().endBalance;
+    } else {
+      // If previous week's weeklyBalances doesn't exist, check if previous week allocation has endBalance
+      // This handles cases where settlement happened but weeklyBalances wasn't created
+      const prevAllocRef = db.collection('allocations').doc(`${prevWeekId}_${uid}`);
+      const prevAllocSnap = await prevAllocRef.get();
+      if (prevAllocSnap.exists && prevAllocSnap.data()?.endBalance != null) {
+        baseBalance = prevAllocSnap.data().endBalance;
+      }
+    }
+  } catch (e) {
+    console.warn(`Could not fetch prev week balance for ${uid} in week ${prevWeekId}, using current balance:`, e);
+  }
+
   const ref = db.collection('allocations').doc(`${weekId}_${uid}`);
   await ref.set({
     uid,
@@ -526,16 +585,20 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
   assertAdmin(context);
   const { weekId } = data || {};
   const targetWeek = weekId || getISOWeekId();
+  const marketRef = db.collection('marketData').doc(targetWeek);
   const yahooFinance = require('yahoo-finance2').default;
   const end = new Date();
   const start = getMondayUTC(end);
-  async function getWeekOpenClose(symbol) {
+
+  // Fetch Yahoo Finance instruments
+  async function getYahooWeekOpenClose(ticker) {
+    try {
     const queryOptions = { period1: start, period2: end, interval: '1d' };
-    const result = await yahooFinance.historical(symbol, queryOptions);
+      const result = await yahooFinance.historical(ticker, queryOptions);
     if (!result || result.length === 0) {
-      const quote = await yahooFinance.quote(symbol);
+        const quote = await yahooFinance.quote(ticker);
       const price = quote.regularMarketPrice || 0;
-      return { open: price, close: price, returnPct: 0 };
+        return { open: price, close: price, returnPct: 0, source: 'quote' };
     }
     const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
     const filtered = sorted.filter(r => new Date(r.date) >= start);
@@ -545,23 +608,74 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
     const open = first.open || first.close || 0;
     const close = last.close || last.open || 0;
     const returnPct = open ? ((close - open) / open) * 100 : 0;
-    return { open, close, returnPct: Number(returnPct.toFixed(4)) };
+      return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
+    } catch (error) {
+      console.error(`Error fetching ${ticker}:`, error.message);
+      return { open: null, close: null, returnPct: null, error: error.message };
+    }
   }
-  const [tsla, aapl] = await Promise.all([
-    getWeekOpenClose('TSLA'), getWeekOpenClose('AAPL')
+
+  // Fetch all Yahoo instruments
+  const yahooInstruments = getAllYahooTickers();
+  const yahooPromises = yahooInstruments.map(async (inst) => {
+    const data = await getYahooWeekOpenClose(inst.ticker);
+    return { code: inst.code, data };
+  });
+
+  // Fetch all TEFAS instruments
+  const tefasInstruments = getAllTefasCodes();
+  const tefasPromises = tefasInstruments.map(async (inst) => {
+    const data = await tefasService.getWeekOpenClose(inst.code, start, end);
+    return { code: inst.code, data };
+  });
+
+  // Wait for all data
+  const [yahooResults, tefasResults] = await Promise.all([
+    Promise.all(yahooPromises),
+    Promise.all(tefasPromises)
   ]);
-  await db.collection('marketData').doc(targetWeek).set({
-    TSLA: tsla,
-    AAPL: aapl,
+
+  // Build market data object
+  const marketData = {
     window: {
       period1: start.toISOString(),
       period2: end.toISOString(),
       tz: 'UTC',
-      source: 'yahoo-finance2'
+      sources: ['yahoo-finance2', 'tefas']
     },
     fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-  await logEvent({ category: 'admin', action: 'fetchMarketData', message: `Admin fetched market data for ${targetWeek}`, data: { targetWeek, TSLA: tsla, AAPL: aapl }, user: { email: context.auth.token.email } });
+  };
+
+  // Add Yahoo results
+  yahooResults.forEach(({ code, data }) => {
+    marketData[code] = data;
+  });
+
+  // Add TEFAS results
+  tefasResults.forEach(({ code, data }) => {
+    marketData[code] = data;
+  });
+
+  // Save to Firestore
+  await marketRef.set(marketData, { merge: true });
+
+  // Log summary
+  const successCount = [...yahooResults, ...tefasResults].filter(r => r.data.returnPct !== null).length;
+  const totalCount = yahooResults.length + tefasResults.length;
+  
+  await logEvent({ 
+    category: 'admin', 
+    action: 'fetchMarketData', 
+    message: `Admin fetched market data for ${targetWeek}: ${successCount}/${totalCount} instruments`, 
+    data: { 
+      targetWeek, 
+      yahooCount: yahooResults.length,
+      tefasCount: tefasResults.length,
+      successCount,
+      totalCount
+    }, 
+    user: { email: context.auth.token.email } 
+  });
   return { ok: true };
 });
 
@@ -597,25 +711,35 @@ exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
     const alloc = doc.data();
     const uid = alloc.uid;
     processedUids.add(uid);
-    const baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     
     // Get actual previous week end balance from weeklyBalances collection
+    // This is the correct baseBalance for this week, not the stored baseBalance
     const prevWeekId = getPrevISOWeekId(weekId);
+    let baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     let prevWeekEndBalance = baseBalance; // fallback to current baseBalance
     
     try {
       const prevWbRef = db.collection('weeklyBalances').doc(`${prevWeekId}_${uid}`);
       const prevWbSnap = await prevWbRef.get();
       if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
+        // Use previous week's endBalance as the baseBalance for this week
         prevWeekEndBalance = prevWbSnap.data().endBalance;
+        baseBalance = prevWeekEndBalance; // Correct the baseBalance to use previous week's end
+      } else {
+        // Fallback: check if previous week allocation has endBalance (if settled but weeklyBalances missing)
+        const prevAllocRef = db.collection('allocations').doc(`${prevWeekId}_${uid}`);
+        const prevAllocSnap = await prevAllocRef.get();
+        if (prevAllocSnap.exists && prevAllocSnap.data()?.endBalance != null) {
+          prevWeekEndBalance = prevAllocSnap.data().endBalance;
+          baseBalance = prevWeekEndBalance;
+        }
       }
     } catch (e) {
       console.warn(`Could not fetch prev week balance for ${uid} in week ${prevWeekId}:`, e);
     }
     
-    const tslaW = alloc.pairs?.TSLA ?? 0;
-    const aaplW = alloc.pairs?.AAPL ?? 0;
-    const retPct = (tslaW * (md.TSLA?.returnPct ?? 0) + aaplW * (md.AAPL?.returnPct ?? 0)) / Math.max(tslaW + aaplW, 1);
+    // Weighted return for all instruments
+    const retPct = calculateWeightedReturn(alloc.pairs, md);
     const endBalance = baseBalance * (1 + retPct / 100);
     
     // Calculate week-over-week percentage based on actual previous week end balance
@@ -730,6 +854,22 @@ async function listWeeksFrom(weekId) {
 async function loadPrevBalancesMap(prevWeekId) {
   const map = new Map();
   if (!prevWeekId) return map;
+  
+  // First, try to load from weeklyBalances (most reliable source)
+  try {
+    const prevWbSnap = await db.collection('weeklyBalances').where('weekId', '==', prevWeekId).get();
+    prevWbSnap.forEach(d => {
+      const wb = d.data();
+      if (wb && wb.uid != null && wb.endBalance != null) {
+        map.set(wb.uid, wb.endBalance);
+      }
+    });
+  } catch (e) {
+    console.warn(`Could not load prev balances from weeklyBalances for ${prevWeekId}:`, e);
+  }
+  
+  // Fallback: load from allocations if weeklyBalances doesn't have data
+  if (map.size === 0) {
   const prevAllocs = await db.collection('allocations').where('weekId', '==', prevWeekId).get();
   prevAllocs.forEach(d => {
     const a = d.data();
@@ -737,6 +877,8 @@ async function loadPrevBalancesMap(prevWeekId) {
       map.set(a.uid, a.endBalance);
     }
   });
+  }
+  
   return map;
 }
 
@@ -770,9 +912,13 @@ async function recomputeFromWeek(weekId) {
   for (let i = startIdx; i < weeks.length; i++) {
     const wk = weeks[i];
     const md = await getEffectiveMarket(wk.id);
-    if (!md) continue;
     const allocsSnap = await db.collection('allocations').where('weekId', '==', wk.id).get();
+    
+    // If has allocations but no market data, skip (can't calculate returns)
+    if (allocsSnap.size > 0 && !md) continue;
+    
     if (allocsSnap.empty) {
+      // No allocations: process as carry-forward (0% return) - this works even without market data
       // No allocations this week: write carry-forward weeklyBalances for all users
       const allBalancesSnap = await db.collection('balances').get();
       const cfBatch = createBatcher();
@@ -786,16 +932,28 @@ async function recomputeFromWeek(weekId) {
         const batchUids = allUids.slice(j, j + batchSize);
         const carryForwardPromises = batchUids.map(async (uid) => {
           const bal = allBalancesSnap.docs.find(d => d.id === uid)?.data() || {};
-          const base = bal.latestBalance != null ? bal.latestBalance : 100000;
+          const fallbackBalance = bal.latestBalance != null ? bal.latestBalance : 100000;
           
-          // Get actual previous week end balance for carry-forward users too
-          let prevWeekEndBalance = base; // fallback to current balance
+          // Get actual previous week end balance for carry-forward users
+          // This is the correct baseBalance for this week
+          let baseBalance = fallbackBalance; // fallback to current balance
+          let prevWeekEndBalance = fallbackBalance;
           
           try {
             const prevWbRef = db.collection('weeklyBalances').doc(`${currentPrevWeekId}_${uid}`);
             const prevWbSnap = await prevWbRef.get();
             if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
+              // Use previous week's endBalance as the baseBalance for this week
               prevWeekEndBalance = prevWbSnap.data().endBalance;
+              baseBalance = prevWeekEndBalance;
+            } else {
+              // Fallback: check if previous week allocation has endBalance
+              const prevAllocRef = db.collection('allocations').doc(`${currentPrevWeekId}_${uid}`);
+              const prevAllocSnap = await prevAllocRef.get();
+              if (prevAllocSnap.exists && prevAllocSnap.data()?.endBalance != null) {
+                prevWeekEndBalance = prevAllocSnap.data().endBalance;
+                baseBalance = prevWeekEndBalance;
+              }
             }
           } catch (e) {
             console.warn(`Could not fetch prev week balance for carry-forward user ${uid} in week ${currentPrevWeekId}:`, e);
@@ -805,8 +963,8 @@ async function recomputeFromWeek(weekId) {
           cfBatch.set(wbRef, {
             uid,
             weekId: wk.id,
-            baseBalance: base,
-            endBalance: base,
+            baseBalance: baseBalance,
+            endBalance: baseBalance, // No return, so endBalance = baseBalance
             resultReturnPct: 0,
             prevWeekEndBalance,
             weekOverWeekPct: 0,
@@ -814,7 +972,7 @@ async function recomputeFromWeek(weekId) {
           }, { merge: true });
           cfBatch.set(db.collection('balances').doc(uid), {
             latestWeekId: wk.id,
-            latestBalance: base,
+            latestBalance: baseBalance,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         });
@@ -830,11 +988,8 @@ async function recomputeFromWeek(weekId) {
       const alloc = docSnap.data();
       const uid = alloc.uid;
       touchedUsers.add(uid);
-      const tslaW = alloc.pairs?.TSLA ?? 0;
-      const aaplW = alloc.pairs?.AAPL ?? 0;
-      const weightSum = tslaW + aaplW;
-      const safeSum = weightSum === 0 ? 1 : weightSum; // prevent div by zero
-      const retPct = (tslaW * (md.TSLA?.returnPct ?? 0) + aaplW * (md.AAPL?.returnPct ?? 0)) / safeSum;
+      // Weighted return for all instruments
+      const retPct = calculateWeightedReturn(alloc.pairs, md);
 
       // Compute base from chain instead of trusting stored baseBalance
       // Seed from previous chain or balances/{uid} or default
@@ -927,11 +1082,41 @@ exports.adminRecomputeFromWeek = functions.https.onCall(async (data, context) =>
 exports.onMarketDataWrite = functions.firestore.document('marketData/{weekId}').onWrite(async (change, context) => {
   const weekId = context.params.weekId;
   if (!weekId) return null;
+  
+  // Only auto-recompute if the week is already settled
+  // This prevents premature recomputation when admin manually fetches data for current/active weeks
   try {
+    const weekSnap = await db.collection('weeks').doc(weekId).get();
+    if (!weekSnap.exists) {
+      // Week doesn't exist yet, skip auto-recompute
+      return null;
+    }
+    const week = weekSnap.data();
+    if (week.status !== 'settled') {
+      // Week is not settled yet, skip auto-recompute to avoid premature calculations
+      await logEvent({ 
+        category: 'recompute', 
+        action: 'onMarketDataWrite', 
+        message: `Skipped auto-recompute for ${weekId} (status: ${week.status})`, 
+        data: { weekId, status: week.status },
+        severity: 'info'
+      });
+      return null;
+    }
+    
+    // Week is settled, safe to recompute
     await recomputeFromWeek(weekId);
     await logEvent({ category: 'recompute', action: 'onMarketDataWrite', message: `Auto recompute from ${weekId} due to marketData write`, data: { weekId } });
   } catch (e) {
     console.error('Recompute failed for', weekId, e);
+    await logEvent({ 
+      category: 'recompute', 
+      action: 'onMarketDataWrite', 
+      message: `Recompute failed for ${weekId}`, 
+      data: { weekId, error: e.message },
+      severity: 'error',
+      outcome: 'failure'
+    });
   }
   return null;
 });

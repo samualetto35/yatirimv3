@@ -58,7 +58,7 @@ const InlineAllocationBox = () => {
             const v = Number(alloc.pairs[s] || 0);
             if (v > 0) next.push({ symbol: s, weight: String(Math.round(v * 100)) });
           });
-          setRows(next.length ? next : [{ symbol: 'TSLA', weight: '' }]);
+          setRows(next.length ? next : [{ symbol: 'XU100', weight: '' }]);
           setHasExisting(next.length > 0);
         }
       } finally {

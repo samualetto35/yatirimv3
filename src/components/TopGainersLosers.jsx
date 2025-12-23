@@ -33,15 +33,8 @@ const TopGainersLosers = ({ limit = 5 }) => {
           setWeekId(latest.id);
           md = await getMarketData(latest.id);
         }
-        // Fallback: pick the lexicographically max weekId in marketData
-        if (!md || !md.pairs) {
-          const snap = await getDocs(collection(db, 'marketData'));
-          const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          // sort desc by weekId string e.g. 2025-W41
-          const sorted = all.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-          md = sorted.find(d => d?.pairs || Object.keys(d || {}).some(k => k !== 'id' && k !== 'fetchedAt' && k !== 'window' && k !== 'tz' && k !== 'source' && typeof d[k] === 'object')) || null;
-          if (md?.id) setWeekId(md.id);
-        }
+        // Only show data for settled weeks - do not fallback to active weeks
+        // This prevents showing incomplete data from weeks that haven't ended yet
         // Extract pairs from either md.pairs or top-level symbols (AAPL/TSLA ...)
         const reserved = new Set(['id', 'fetchedAt', 'window', 'tz', 'source']);
         const entries = md?.pairs
