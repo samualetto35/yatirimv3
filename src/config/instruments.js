@@ -222,7 +222,7 @@ export const INSTRUMENTS = [
     category: 'para_piyasasi',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
   {
     code: 'DCB',
@@ -231,7 +231,7 @@ export const INSTRUMENTS = [
     category: 'para_piyasasi',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Arbitraj
@@ -242,7 +242,7 @@ export const INSTRUMENTS = [
     category: 'arbitraj',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Borçlanma Araçları (Debt Instruments)
@@ -253,7 +253,7 @@ export const INSTRUMENTS = [
     category: 'borclanma',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
   {
     code: 'FPK',
@@ -262,7 +262,7 @@ export const INSTRUMENTS = [
     category: 'borclanma',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
   {
     code: 'APT',
@@ -271,7 +271,7 @@ export const INSTRUMENTS = [
     category: 'borclanma',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
   {
     code: 'GUV',
@@ -280,7 +280,7 @@ export const INSTRUMENTS = [
     category: 'borclanma',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Altın Fonu (Gold Fund)
@@ -291,7 +291,7 @@ export const INSTRUMENTS = [
     category: 'altin',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
     popular: true,
   },
 
@@ -303,7 +303,7 @@ export const INSTRUMENTS = [
     category: 'doviz_fonu',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Gümüş Fonu (Silver Fund)
@@ -314,7 +314,7 @@ export const INSTRUMENTS = [
     category: 'gumus',
     currency: 'TRY',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Eurobond Fonu
@@ -325,7 +325,7 @@ export const INSTRUMENTS = [
     category: 'eurobond',
     currency: 'USD',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 
   // Yabancı Hisse Fonları (Foreign Equity Funds)
@@ -336,7 +336,7 @@ export const INSTRUMENTS = [
     category: 'yabanci_hisse_fonu',
     currency: 'USD',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
   {
     code: 'AFV',
@@ -345,7 +345,7 @@ export const INSTRUMENTS = [
     category: 'yabanci_hisse_fonu',
     currency: 'EUR',
     source: 'tefas',
-    enabled: false, // DISABLED: TEFAS scraping not working
+    enabled: true, // ENABLED: HangiKredi scraping working
   },
 ];
 

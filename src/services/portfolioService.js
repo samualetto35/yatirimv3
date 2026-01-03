@@ -74,6 +74,38 @@ export const getLatestSettledWeek = async () => {
     if (!snap.empty) {
       const result = snap.docs[0].data();
       console.log('Found latest settled week:', result.id, 'status:', result.status);
+      
+      // SAFETY CHECK: Verify that this settled week has market data
+      // If not, try to find the previous settled week that has data
+      const marketDataRef = doc(db, 'marketData', result.id);
+      const marketDataSnap = await getDoc(marketDataRef);
+      
+      if (!marketDataSnap.exists || !marketDataSnap.data()) {
+        console.warn(`⚠️  Settled week ${result.id} has no market data. Looking for previous settled week with data...`);
+        
+        // Get all settled weeks and find the first one with market data
+        const allSettledSnap = await getDocs(query(ref, where('status', '==', 'settled')));
+        const allSettled = allSettledSnap.docs.map(d => d.data());
+        allSettled.sort((a, b) => (b?.endDate?.toMillis?.() || 0) - (a?.endDate?.toMillis?.() || 0));
+        
+        for (const week of allSettled) {
+          const mdRef = doc(db, 'marketData', week.id);
+          const mdSnap = await getDoc(mdRef);
+          if (mdSnap.exists && mdSnap.data()) {
+            const instruments = Object.keys(mdSnap.data()).filter(key => 
+              key !== 'window' && key !== 'fetchedAt' && key !== 'sources'
+            );
+            if (instruments.length > 0) {
+              console.log(`✅ Found settled week with market data: ${week.id} (${instruments.length} instruments)`);
+              return week;
+            }
+          }
+        }
+        
+        console.warn(`❌ No settled weeks found with market data. Returning null.`);
+        return null;
+      }
+      
       return result;
     }
   } catch (e) {
@@ -81,8 +113,28 @@ export const getLatestSettledWeek = async () => {
     const snap = await getDocs(query(ref, where('status', '==', 'settled')));
     const all = snap.docs.map(d => d.data());
     all.sort((a, b) => (b?.endDate?.toMillis?.() || 0) - (a?.endDate?.toMillis?.() || 0));
+    
+    // Check each settled week for market data
+    for (const week of all) {
+      try {
+        const mdRef = doc(db, 'marketData', week.id);
+        const mdSnap = await getDoc(mdRef);
+        if (mdSnap.exists && mdSnap.data()) {
+          const instruments = Object.keys(mdSnap.data()).filter(key => 
+            key !== 'window' && key !== 'fetchedAt' && key !== 'sources'
+          );
+          if (instruments.length > 0) {
+            console.log(`Fallback found latest settled week with data: ${week.id}, status: ${week.status}`);
+            return week;
+          }
+        }
+      } catch (err) {
+        console.warn(`Error checking market data for ${week.id}:`, err);
+      }
+    }
+    
     if (all[0]) {
-      console.log('Fallback found latest settled week:', all[0].id, 'status:', all[0].status);
+      console.log('Fallback found latest settled week (no data check):', all[0].id, 'status:', all[0].status);
       return all[0];
     }
   }
@@ -382,4 +434,39 @@ export const testWeeklyBalancesAccess = async () => {
   }
 };
 
+// Get daily returns for a specific week
+export const getDailyReturnsByWeek = async (uid, weekId) => {
+  if (!uid || !weekId) return [];
+  const ref = collection(db, 'dailyReturns');
+  try {
+    const q = query(
+      ref, 
+      where('uid', '==', uid), 
+      where('weekId', '==', weekId),
+      orderBy('day', 'asc')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data());
+  } catch (e) {
+    // If orderBy fails (index not ready), try without orderBy
+    try {
+      const q = query(
+        ref, 
+        where('uid', '==', uid), 
+        where('weekId', '==', weekId)
+      );
+      const snap = await getDocs(q);
+      const results = snap.docs.map(d => d.data());
+      // Sort client-side
+      return results.sort((a, b) => {
+        const dayA = parseInt(a.day?.replace('d', '') || '0');
+        const dayB = parseInt(b.day?.replace('d', '') || '0');
+        return dayA - dayB;
+      });
+    } catch (e2) {
+      console.error('Error fetching daily returns:', e2);
+      return [];
+    }
+  }
+};
 

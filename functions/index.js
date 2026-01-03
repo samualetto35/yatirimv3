@@ -67,6 +67,34 @@ function parseWeekId(weekId) {
   return { year: Number(yearStr), week: Number(wn) };
 }
 
+function getWeekDatesFromWeekId(weekId) {
+  // Convert weekId (e.g., "2026-W01") to Monday and Friday dates
+  const { year, week } = parseWeekId(weekId);
+  
+  // Get January 1st of the year
+  const jan1 = new Date(Date.UTC(year, 0, 1));
+  const jan1Day = jan1.getUTCDay() || 7; // Monday = 1, Sunday = 7
+  
+  // Calculate the date of the Monday of week 1
+  // Week 1 is the week containing Jan 4th (ISO 8601 standard)
+  const daysToJan4 = 4 - jan1Day;
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4.getUTCDay() || 7) + 1);
+  
+  // Calculate Monday of the target week
+  const targetMonday = new Date(week1Monday);
+  targetMonday.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  targetMonday.setUTCHours(0, 0, 0, 0);
+  
+  // Calculate Friday of the target week
+  const targetFriday = new Date(targetMonday);
+  targetFriday.setUTCDate(targetMonday.getUTCDate() + 4);
+  targetFriday.setUTCHours(23, 59, 59, 999);
+  
+  return { start: targetMonday, end: targetFriday };
+}
+
 async function ensureBalance(uid) {
   const balRef = db.collection('balances').doc(uid);
   const snap = await balRef.get();
@@ -225,6 +253,128 @@ exports.closeCurrentAllocation = functions.pubsub.schedule('0 23 * * SUN').timeZ
   return null;
 });
 
+// Scheduled: Every Friday 23:25 TRT - fetch TEFAS data from HangiKredi (before main market data fetch)
+// This runs before fetchMarketData to ensure TEFAS data is available
+exports.fetchTefasDataFromHangikredi = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '512MB'
+  })
+  .pubsub.schedule('25 23 * * FRI')
+  .timeZone('Europe/Istanbul')
+  .onRun(async (context) => {
+    const weekId = getISOWeekId();
+    const marketRef = db.collection('marketData').doc(weekId);
+    
+    const end = new Date();
+    const start = getMondayUTC(end);
+    
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`🚀 Fetching TEFAS data from HangiKredi for week ${weekId}`);
+    console.log(`   Date range: ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`);
+    console.log(`${'='.repeat(70)}\n`);
+    
+    try {
+      // Get existing market data to preserve Yahoo data
+      const existingData = (await marketRef.get()).data() || {};
+      const existingYahooCount = Object.keys(existingData).filter(key => {
+        const value = existingData[key];
+        return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+      }).length;
+      
+      console.log(`   Existing Yahoo instruments: ${existingYahooCount}`);
+      
+      // Fetch TEFAS data from HangiKredi
+      const tefasData = await tefasService.fetchTefasDataFromHangikredi(start, end);
+      
+      const successCount = Object.values(tefasData).filter(
+        d => d.returnPct !== null
+      ).length;
+      const totalCount = Object.keys(tefasData).length;
+      const failCount = totalCount - successCount;
+      
+      console.log(`\n📊 Results: ${successCount}/${totalCount} successful, ${failCount} failed`);
+      
+      if (successCount === 0) {
+        throw new Error('No TEFAS data fetched from HangiKredi - empty result');
+      }
+      
+      // SAFE UPDATE: Only update TEFAS instruments, preserve all other data
+      const updatedData = { ...existingData };
+      
+      // Only update TEFAS instruments
+      Object.keys(tefasData).forEach(code => {
+        updatedData[code] = tefasData[code];
+      });
+      
+      // Update metadata
+      updatedData.fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+      if (!updatedData.sources) {
+        updatedData.sources = [];
+      }
+      if (!updatedData.sources.includes('hangikredi')) {
+        updatedData.sources.push('hangikredi');
+      }
+      
+      // SAFE: Use merge: true to preserve existing data
+      await marketRef.set(updatedData, { merge: true });
+      
+      console.log(`✅ Updated marketData for ${weekId} (merge: true - Yahoo data preserved)`);
+      
+      // Verify Yahoo data is still there
+      const afterUpdate = (await marketRef.get()).data() || {};
+      const afterYahooCount = Object.keys(afterUpdate).filter(key => {
+        const value = afterUpdate[key];
+        return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+      }).length;
+      
+      if (afterYahooCount !== existingYahooCount) {
+        console.warn(`⚠️  Warning: Yahoo count changed from ${existingYahooCount} to ${afterYahooCount}`);
+      } else {
+        console.log(`✅ Verified: Yahoo data preserved (${afterYahooCount} instruments)`);
+      }
+      
+      await logEvent({
+        category: 'automation',
+        action: 'fetchTefasData',
+        message: `TEFAS data fetched from HangiKredi for ${weekId}: ${successCount}/${totalCount} funds`,
+        data: {
+          weekId,
+          successCount,
+          totalCount,
+          failCount,
+          source: 'hangikredi',
+          yahooDataPreserved: afterYahooCount === existingYahooCount
+        },
+        outcome: 'success'
+      });
+      
+      console.log(`\n✅ TEFAS data fetch completed successfully\n`);
+      return null;
+      
+    } catch (error) {
+      console.error(`\n❌ Error fetching TEFAS data from HangiKredi:`, error);
+      console.error('Stack:', error.stack);
+      
+      await logEvent({
+        category: 'automation',
+        action: 'fetchTefasData',
+        message: `TEFAS fetch failed for ${weekId}: ${error.message}`,
+        data: {
+          weekId,
+          error: error.message,
+          stack: error.stack?.substring(0, 500),
+          source: 'hangikredi'
+        },
+        severity: 'error',
+        outcome: 'failure'
+      });
+      
+      // Don't throw - let fetchMarketData still run
+      return null;
+    }
+  });
+
 // Scheduled: Every Friday 23:30 TRT (after US market close) - fetch market data for the current week
 exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('Europe/Istanbul').onRun(async () => {
   const yahooFinance = require('yahoo-finance2').default;
@@ -267,8 +417,31 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
   });
 
   // Fetch all TEFAS instruments
+  // Note: TEFAS data should already be fetched by fetchTefasDataFromHangikredi at 23:25
+  // But we'll still try to fetch as fallback if needed
   const tefasInstruments = getAllTefasCodes();
   const tefasPromises = tefasInstruments.map(async (inst) => {
+    // Try to get from HangiKredi first (chart data for real weekly return)
+    try {
+      const hangikrediData = await tefasService.getFundDataFromHangikredi(inst.code, end, start, end);
+      if (hangikrediData && hangikrediData.returnPct !== null && hangikrediData.source === 'hangikredi-chart') {
+        // We have real weekly return from chart
+        return { 
+          code: inst.code, 
+          data: {
+            open: hangikrediData.open,
+            close: hangikrediData.close,
+            returnPct: hangikrediData.returnPct,
+            source: 'hangikredi-chart',
+            openDate: hangikrediData.openDate,
+            closeDate: hangikrediData.closeDate
+          }
+        };
+      }
+    } catch (e) {
+      console.log(`HangiKredi fallback for ${inst.code}: ${e.message}`);
+    }
+    // Fallback to old method
     const data = await tefasService.getWeekOpenClose(inst.code, start, end);
     return { code: inst.code, data };
   });
@@ -285,7 +458,7 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
       period1: start.toISOString(),
       period2: end.toISOString(),
       tz: 'UTC',
-      sources: ['yahoo-finance2', 'tefas']
+      sources: ['yahoo-finance2', 'hangikredi']
     },
     fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -325,10 +498,68 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
 
 // Scheduled: Every Friday 23:45 TRT - settle week (after market data)
 exports.settleWeek = functions.pubsub.schedule('45 23 * * FRI').timeZone('Europe/Istanbul').onRun(async () => {
-  const weekId = getISOWeekId();
+  const now = new Date();
+  const weekId = getISOWeekId(now);
+  
+  // SAFETY CHECK: Verify that the week has actually ended
+  // Get week dates to ensure we're settling the correct week
+  const weekDates = getWeekDatesFromWeekId(weekId);
+  const weekEndDate = weekDates.end;
+  
+  // Check if week has actually ended (endDate should be in the past)
+  if (now < weekEndDate) {
+    const errorMsg = `Cannot settle week ${weekId}: Week has not ended yet. Current time: ${now.toISOString()}, Week end: ${weekEndDate.toISOString()}`;
+    console.error(`❌ ${errorMsg}`);
+    await logEvent({
+      category: 'automation',
+      action: 'settleWeek',
+      message: errorMsg,
+      data: { weekId, currentTime: now.toISOString(), weekEndDate: weekEndDate.toISOString() },
+      severity: 'error',
+      outcome: 'failure'
+    });
+    return null;
+  }
+  
+  // Additional check: Verify week document exists and has correct endDate
+  const weekRef = db.collection('weeks').doc(weekId);
+  const weekSnap = await weekRef.get();
+  if (weekSnap.exists) {
+    const weekData = weekSnap.data();
+    const storedEndDate = weekData.endDate?.toDate?.() || weekData.endDate;
+    if (storedEndDate && storedEndDate > now) {
+      const errorMsg = `Cannot settle week ${weekId}: Stored endDate is in the future. Stored: ${storedEndDate.toISOString()}, Current: ${now.toISOString()}`;
+      console.error(`❌ ${errorMsg}`);
+      await logEvent({
+        category: 'automation',
+        action: 'settleWeek',
+        message: errorMsg,
+        data: { weekId, storedEndDate: storedEndDate.toISOString(), currentTime: now.toISOString() },
+        severity: 'error',
+        outcome: 'failure'
+      });
+      return null;
+    }
+  }
+  
+  console.log(`\n${'='.repeat(70)}`);
+  console.log(`🔧 Settling week ${weekId}`);
+  console.log(`   Current time: ${now.toISOString()}`);
+  console.log(`   Week end date: ${weekEndDate.toISOString()}`);
+  console.log(`   Week has ended: ✅`);
+  console.log(`${'='.repeat(70)}\n`);
+  
   const md = await getEffectiveMarket(weekId);
   if (!md) {
     console.warn('No effective market data for', weekId);
+    await logEvent({
+      category: 'automation',
+      action: 'settleWeek',
+      message: `Cannot settle week ${weekId}: No market data`,
+      data: { weekId },
+      severity: 'warning',
+      outcome: 'failure'
+    });
     return null;
   }
 
@@ -696,6 +927,427 @@ exports.adminSetMarketCorrection = functions.https.onCall(async (data, context) 
   return { ok: true };
 });
 
+// Admin callable: Test Fintables fetching (SAFE - only updates TEFAS data, doesn't affect week status or Yahoo data)
+exports.adminTestFintables = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  const { weekId, dryRun = true } = data || {};
+  
+  // If no weekId provided, use current week
+  const targetWeek = weekId || getISOWeekId();
+  
+  // Check if week is settled - we can still safely update TEFAS data
+  const weekSnap = await db.collection('weeks').doc(targetWeek).get();
+  const weekData = weekSnap.exists ? weekSnap.data() : null;
+  const isSettled = weekData?.status === 'settled';
+  
+  if (isSettled && !dryRun) {
+    console.log(`⚠️  Week ${targetWeek} is settled, but safe to update TEFAS data only (merge: true)`);
+  }
+  
+  // Get existing market data to preserve Yahoo data
+  const marketRef = db.collection('marketData').doc(targetWeek);
+  const existingData = (await marketRef.get()).data() || {};
+  const existingYahooCount = Object.keys(existingData).filter(key => {
+    const value = existingData[key];
+    return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+  }).length;
+  
+  const end = new Date();
+  const start = getMondayUTC(end);
+  
+  console.log(`🧪 Testing Fintables fetch for week ${targetWeek}...`);
+  console.log(`   Dry run: ${dryRun}`);
+  console.log(`   Week status: ${weekData?.status || 'unknown'}`);
+  console.log(`   Existing Yahoo instruments: ${existingYahooCount}`);
+  console.log(`   Date range: ${start.toISOString()} to ${end.toISOString()}`);
+  
+  try {
+    const tefasData = await tefasService.fetchTefasDataFromFintables(start, end);
+    
+    const successCount = Object.values(tefasData).filter(
+      d => d.returnPct !== null && d.open !== null && d.close !== null
+    ).length;
+    const totalCount = Object.keys(tefasData).length;
+    const failCount = totalCount - successCount;
+    
+    const result = {
+      weekId: targetWeek,
+      successCount,
+      totalCount,
+      failCount,
+      successRate: ((successCount / totalCount) * 100).toFixed(1),
+      isSettled,
+      dryRun,
+      existingYahooCount,
+      data: tefasData
+    };
+    
+    if (!dryRun) {
+      // SAFE UPDATE: Only update TEFAS instruments, preserve all other data
+      // Using merge: true ensures we don't overwrite existing Yahoo data
+      const updatedData = { ...existingData };
+      
+      // Only update TEFAS instruments
+      Object.keys(tefasData).forEach(code => {
+        updatedData[code] = tefasData[code];
+      });
+      
+      // Update metadata
+      updatedData.fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+      if (!updatedData.sources) {
+        updatedData.sources = [];
+      }
+      if (!updatedData.sources.includes('fintables')) {
+        updatedData.sources.push('fintables');
+      }
+      
+      // SAFE: Use merge: true to preserve existing data
+      await marketRef.set(updatedData, { merge: true });
+      
+      console.log(`✅ Updated marketData for ${targetWeek} (merge: true - Yahoo data preserved)`);
+      
+      // Verify Yahoo data is still there
+      const afterUpdate = (await marketRef.get()).data() || {};
+      const afterYahooCount = Object.keys(afterUpdate).filter(key => {
+        const value = afterUpdate[key];
+        return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+      }).length;
+      
+      if (afterYahooCount !== existingYahooCount) {
+        console.warn(`⚠️  Warning: Yahoo count changed from ${existingYahooCount} to ${afterYahooCount}`);
+      } else {
+        console.log(`✅ Verified: Yahoo data preserved (${afterYahooCount} instruments)`);
+      }
+      
+      // If week is settled, log that recompute might be needed
+      if (isSettled) {
+        console.log(`⚠️  Week is settled. You may want to trigger recompute if needed.`);
+      }
+      
+      await logEvent({
+        category: 'admin',
+        action: 'testFintables',
+        message: `Admin tested Fintables for ${targetWeek}: ${successCount}/${totalCount} funds`,
+        data: {
+          weekId: targetWeek,
+          successCount,
+          totalCount,
+          failCount,
+          isSettled,
+          dryRun: false,
+          yahooDataPreserved: afterYahooCount === existingYahooCount
+        },
+        user: { email: context.auth.token.email }
+      });
+    } else {
+      console.log(`🔍 Dry run - no data saved`);
+    }
+    
+    return {
+      ok: true,
+      ...result,
+      message: dryRun 
+        ? `Dry run completed: ${successCount}/${totalCount} funds would be updated (Yahoo data: ${existingYahooCount} preserved)`
+        : `Data updated: ${successCount}/${totalCount} funds (Yahoo data: ${existingYahooCount} preserved)`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in adminTestFintables:', error);
+    console.error('Stack:', error.stack);
+    
+    await logEvent({
+      category: 'admin',
+      action: 'testFintables',
+      message: `Fintables test failed for ${targetWeek}: ${error.message}`,
+      data: {
+        weekId: targetWeek,
+        error: error.message,
+        stack: error.stack?.substring(0, 500)
+      },
+      severity: 'error',
+      outcome: 'failure',
+      user: { email: context.auth.token.email }
+    });
+    
+    throw new functions.https.HttpsError('internal', `Test failed: ${error.message}`);
+  }
+});
+
+// HTTP trigger for manual execution (no auth required for testing)
+exports.triggerFetchTefasDataFromHangikredi = functions.https.onRequest(async (req, res) => {
+  // CORS headers
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  
+  try {
+    const weekId = req.body?.weekId || req.query?.weekId || getISOWeekId();
+    const marketRef = db.collection('marketData').doc(weekId);
+    
+    // Calculate week dates from weekId
+    const { start, end } = getWeekDatesFromWeekId(weekId);
+    
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`🚀 Manual trigger: Fetching TEFAS data from HangiKredi for week ${weekId}`);
+    console.log(`   Date range: ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`);
+    console.log(`${'='.repeat(70)}\n`);
+    
+    // Get existing market data to preserve Yahoo data
+    const existingData = (await marketRef.get()).data() || {};
+    const existingYahooCount = Object.keys(existingData).filter(key => {
+      const value = existingData[key];
+      return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+    }).length;
+    
+    console.log(`   Existing Yahoo instruments: ${existingYahooCount}`);
+    
+    // Fetch TEFAS data from HangiKredi
+    const tefasData = await tefasService.fetchTefasDataFromHangikredi(start, end);
+    
+    const successCount = Object.values(tefasData).filter(
+      d => d.returnPct !== null
+    ).length;
+    const totalCount = Object.keys(tefasData).length;
+    const failCount = totalCount - successCount;
+    
+    console.log(`\n📊 Results: ${successCount}/${totalCount} successful, ${failCount} failed`);
+    
+    if (successCount === 0) {
+      throw new Error('No TEFAS data fetched from HangiKredi - empty result');
+    }
+    
+    // SAFE UPDATE: Only update TEFAS instruments, preserve all other data
+    const updatedData = { ...existingData };
+    
+    // Only update TEFAS instruments
+    Object.keys(tefasData).forEach(code => {
+      updatedData[code] = tefasData[code];
+    });
+    
+    // Update metadata
+    updatedData.fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+    if (!updatedData.sources) {
+      updatedData.sources = [];
+    }
+    if (!updatedData.sources.includes('hangikredi')) {
+      updatedData.sources.push('hangikredi');
+    }
+    
+    // SAFE: Use merge: true to preserve existing data
+    await marketRef.set(updatedData, { merge: true });
+    
+    console.log(`✅ Updated marketData for ${weekId} (merge: true - Yahoo data preserved)`);
+    
+    // Verify Yahoo data is still there
+    const afterUpdate = (await marketRef.get()).data() || {};
+    const afterYahooCount = Object.keys(afterUpdate).filter(key => {
+      const value = afterUpdate[key];
+      return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+    }).length;
+    
+    if (afterYahooCount !== existingYahooCount) {
+      console.warn(`⚠️  Warning: Yahoo count changed from ${existingYahooCount} to ${afterYahooCount}`);
+    } else {
+      console.log(`✅ Verified: Yahoo data preserved (${afterYahooCount} instruments)`);
+    }
+    
+    await logEvent({
+      category: 'admin',
+      action: 'triggerFetchTefasData',
+      message: `Manually triggered TEFAS data fetch for ${weekId}: ${successCount}/${totalCount} funds`,
+      data: {
+        weekId,
+        successCount,
+        totalCount,
+        failCount,
+        source: 'hangikredi',
+        yahooDataPreserved: afterYahooCount === existingYahooCount
+      },
+      outcome: 'success'
+    });
+    
+    res.status(200).json({
+      success: true,
+      weekId,
+      successCount,
+      totalCount,
+      failCount,
+      message: `Data updated: ${successCount}/${totalCount} funds (Yahoo data: ${existingYahooCount} preserved)`
+    });
+    
+  } catch (error) {
+    console.error(`\n❌ Error:`, error);
+    console.error('Stack:', error.stack);
+    
+    await logEvent({
+      category: 'admin',
+      action: 'triggerFetchTefasData',
+      message: `Manual trigger failed: ${error.message}`,
+      data: {
+        error: error.message,
+        stack: error.stack?.substring(0, 500)
+      },
+      severity: 'error',
+      outcome: 'failure'
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+exports.adminTestHangikredi = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  const { weekId, dryRun = true } = data || {};
+  
+  // If no weekId provided, use current week
+  const targetWeek = weekId || getISOWeekId();
+  
+  // Check if week is settled - we can still safely update TEFAS data
+  const weekSnap = await db.collection('weeks').doc(targetWeek).get();
+  const weekData = weekSnap.exists ? weekSnap.data() : null;
+  const isSettled = weekData?.status === 'settled';
+  
+  if (isSettled && !dryRun) {
+    console.log(`⚠️  Week ${targetWeek} is settled, but safe to update TEFAS data only (merge: true)`);
+  }
+  
+  // Get existing market data to preserve Yahoo data
+  const marketRef = db.collection('marketData').doc(targetWeek);
+  const existingData = (await marketRef.get()).data() || {};
+  const existingYahooCount = Object.keys(existingData).filter(key => {
+    const value = existingData[key];
+    return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+  }).length;
+  
+  // Calculate week dates from weekId (not from current date!)
+  const { start, end } = getWeekDatesFromWeekId(targetWeek);
+  
+  console.log(`🧪 Testing HangiKredi fetch for week ${targetWeek}...`);
+  console.log(`   Dry run: ${dryRun}`);
+  console.log(`   Week status: ${weekData?.status || 'unknown'}`);
+  console.log(`   Existing Yahoo instruments: ${existingYahooCount}`);
+  console.log(`   Date range: ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`);
+  
+  try {
+    const tefasData = await tefasService.fetchTefasDataFromHangikredi(start, end);
+    
+    const successCount = Object.values(tefasData).filter(
+      d => d.returnPct !== null
+    ).length;
+    const totalCount = Object.keys(tefasData).length;
+    const failCount = totalCount - successCount;
+    
+    const result = {
+      weekId: targetWeek,
+      successCount,
+      totalCount,
+      failCount,
+      successRate: ((successCount / totalCount) * 100).toFixed(1),
+      isSettled,
+      dryRun,
+      existingYahooCount,
+      data: tefasData
+    };
+    
+    if (!dryRun) {
+      // SAFE UPDATE: Only update TEFAS instruments, preserve all other data
+      // Using merge: true ensures we don't overwrite existing Yahoo data
+      const updatedData = { ...existingData };
+      
+      // Only update TEFAS instruments
+      Object.keys(tefasData).forEach(code => {
+        updatedData[code] = tefasData[code];
+      });
+      
+      // Update metadata
+      updatedData.fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+      if (!updatedData.sources) {
+        updatedData.sources = [];
+      }
+      if (!updatedData.sources.includes('hangikredi')) {
+        updatedData.sources.push('hangikredi');
+      }
+      
+      // SAFE: Use merge: true to preserve existing data
+      await marketRef.set(updatedData, { merge: true });
+      
+      console.log(`✅ Updated marketData for ${targetWeek} (merge: true - Yahoo data preserved)`);
+      
+      // Verify Yahoo data is still there
+      const afterUpdate = (await marketRef.get()).data() || {};
+      const afterYahooCount = Object.keys(afterUpdate).filter(key => {
+        const value = afterUpdate[key];
+        return value && typeof value === 'object' && value.source && value.source.includes('yahoo');
+      }).length;
+      
+      if (afterYahooCount !== existingYahooCount) {
+        console.warn(`⚠️  Warning: Yahoo count changed from ${existingYahooCount} to ${afterYahooCount}`);
+      } else {
+        console.log(`✅ Verified: Yahoo data preserved (${afterYahooCount} instruments)`);
+      }
+      
+      // If week is settled, log that recompute might be needed
+      if (isSettled) {
+        console.log(`⚠️  Week is settled. You may want to trigger recompute if needed.`);
+      }
+      
+      await logEvent({
+        category: 'admin',
+        action: 'testHangikredi',
+        message: `Admin tested HangiKredi for ${targetWeek}: ${successCount}/${totalCount} funds`,
+        data: {
+          weekId: targetWeek,
+          successCount,
+          totalCount,
+          failCount,
+          isSettled,
+          dryRun: false,
+          yahooDataPreserved: afterYahooCount === existingYahooCount
+        },
+        user: { email: context.auth.token.email }
+      });
+    } else {
+      console.log(`🔍 Dry run - no data saved`);
+    }
+    
+    return {
+      ok: true,
+      ...result,
+      message: dryRun 
+        ? `Dry run completed: ${successCount}/${totalCount} funds would be updated (Yahoo data: ${existingYahooCount} preserved)`
+        : `Data updated: ${successCount}/${totalCount} funds (Yahoo data: ${existingYahooCount} preserved)`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in adminTestHangikredi:', error);
+    console.error('Stack:', error.stack);
+    
+    await logEvent({
+      category: 'admin',
+      action: 'testHangikredi',
+      message: `HangiKredi test failed for ${targetWeek}: ${error.message}`,
+      data: {
+        weekId: targetWeek,
+        error: error.message,
+        stack: error.stack?.substring(0, 500)
+      },
+      severity: 'error',
+      outcome: 'failure',
+      user: { email: context.auth.token.email }
+    });
+    
+    throw new functions.https.HttpsError('internal', `Test failed: ${error.message}`);
+  }
+});
+
 exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
   assertAdmin(context);
   const { weekId } = data || {};
@@ -828,6 +1480,40 @@ exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
   await upsertWeek(weekId, { status: 'settled' });
   await logEvent({ category: 'admin', action: 'settleWeek', message: `Admin settled ${weekId}`, data: { weekId, numAllocations: allocsSnap.size }, user: { email: context.auth.token.email } });
   return { ok: true };
+});
+
+// Admin: Fix week status (e.g., if W02 is incorrectly marked as settled)
+exports.adminFixWeekStatus = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  const { weekId, newStatus } = data || {};
+  if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
+  if (!newStatus) throw new functions.https.HttpsError('invalid-argument', 'newStatus required');
+  
+  const validStatuses = ['upcoming', 'open', 'closed', 'settled'];
+  if (!validStatuses.includes(newStatus)) {
+    throw new functions.https.HttpsError('invalid-argument', `newStatus must be one of: ${validStatuses.join(', ')}`);
+  }
+  
+  const weekRef = db.collection('weeks').doc(weekId);
+  const weekSnap = await weekRef.get();
+  
+  if (!weekSnap.exists) {
+    throw new functions.https.HttpsError('not-found', `Week ${weekId} does not exist`);
+  }
+  
+  const oldStatus = weekSnap.data().status;
+  
+  await weekRef.update({ status: newStatus });
+  
+  await logEvent({ 
+    category: 'admin', 
+    action: 'adminFixWeekStatus', 
+    message: `Admin changed week ${weekId} status from ${oldStatus} to ${newStatus}`, 
+    data: { weekId, oldStatus, newStatus }, 
+    user: { email: context.auth.token.email }
+  });
+  
+  return { success: true, weekId, oldStatus, newStatus };
 });
 
 // --------- Recompute pipeline (admin + trigger) ---------
@@ -1130,6 +1816,225 @@ exports.onMarketCorrectionsWrite = functions.firestore.document('marketCorrectio
   } catch (e) {
     console.error('Recompute failed for', weekId, e);
   }
+  return null;
+});
+
+// Scheduled: Every weekday (Mon-Thu) 23:00 TRT - fetch daily market data for intraday visualization
+exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZone('Europe/Istanbul').onRun(async () => {
+  const yahooFinance = require('yahoo-finance2').default;
+  const now = new Date();
+  
+  // Only run on weekdays (Monday=1, Thursday=4)
+  const dayOfWeek = now.getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6 || dayOfWeek === 5) {
+    return null; // Skip weekends and Friday
+  }
+
+  // Determine which day of week
+  // Mon 23:00 -> Tue data (d1)
+  // Tue 23:00 -> Wed data (d2)
+  // Wed 23:00 -> Thu data (d3)
+  // Thu 23:00 -> Fri data (d4)
+  let dayNum;
+  if (dayOfWeek === 1) dayNum = 1; // Monday -> Tuesday data (d1)
+  else if (dayOfWeek === 2) dayNum = 2; // Tuesday -> Wednesday data (d2)
+  else if (dayOfWeek === 3) dayNum = 3; // Wednesday -> Thursday data (d3)
+  else if (dayOfWeek === 4) dayNum = 4; // Thursday -> Friday data (d4)
+  else return null;
+
+  // Calculate target date (tomorrow from schedule perspective)
+  const targetDate = new Date(now);
+  targetDate.setDate(targetDate.getDate() + 1);
+  targetDate.setHours(0, 0, 0, 0);
+  const dateStr = targetDate.toISOString().split('T')[0]; // YYYY-MM-DD
+  const weekId = getISOWeekId(targetDate); // Use target date's week
+
+  // Fetch Yahoo Finance instruments - get daily open/close and return
+  async function getYahooDailyReturn(ticker) {
+    try {
+      const nextDay = new Date(targetDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      
+      const queryOptions = { 
+        period1: targetDate, 
+        period2: nextDay, 
+        interval: '1d' 
+      };
+      
+      const result = await yahooFinance.historical(ticker, queryOptions);
+      
+      if (result && result.length > 0) {
+        const dayData = result[result.length - 1];
+        const open = dayData.open || dayData.close || 0;
+        const close = dayData.close || dayData.open || 0;
+        const returnPct = open > 0 ? ((close - open) / open) * 100 : 0;
+        
+        return {
+          open: Number(open.toFixed(4)),
+          close: Number(close.toFixed(4)),
+          returnPct: Number(returnPct.toFixed(4)),
+          source: 'historical',
+          date: dateStr
+        };
+      }
+      
+      // Fallback: try quote
+      const quote = await yahooFinance.quote(ticker);
+      const price = quote.regularMarketPrice || quote.price || 0;
+      return {
+        open: price,
+        close: price,
+        returnPct: 0,
+        source: 'quote',
+        date: dateStr
+      };
+    } catch (error) {
+      console.error(`Error fetching daily ${ticker}:`, error.message);
+      return {
+        open: null,
+        close: null,
+        returnPct: null,
+        source: 'error',
+        date: dateStr,
+        error: error.message
+      };
+    }
+  }
+
+  // Fetch all Yahoo instruments (TEFAS will be added later)
+  const yahooInstruments = getAllYahooTickers();
+  const yahooPromises = yahooInstruments.map(async (inst) => {
+    const data = await getYahooDailyReturn(inst.ticker);
+    return { code: inst.code, data };
+  });
+
+  const yahooResults = await Promise.all(yahooPromises);
+
+  // Build daily market data object
+  const dailyMarketData = {
+    weekId,
+    date: dateStr,
+    day: `d${dayNum}`,
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    sources: ['yahoo-finance2']
+  };
+
+  // Add Yahoo results
+  yahooResults.forEach(({ code, data }) => {
+    dailyMarketData[code] = data;
+  });
+
+  // Save to Firestore
+  const dailyRef = db.collection('dailyMarketData').doc(`${weekId}_${dateStr}`);
+  await dailyRef.set(dailyMarketData, { merge: true });
+
+  // Now calculate daily portfolio values for all users with allocations for this week
+  const allocsSnap = await db.collection('allocations').where('weekId', '==', weekId).get();
+  
+  if (allocsSnap.empty) {
+    await logEvent({ 
+      category: 'market', 
+      action: 'fetchDailyMarketData', 
+      message: `No allocations for ${weekId}, skipping daily returns`, 
+      data: { weekId, date: dateStr, day: `d${dayNum}` } 
+    });
+    return null;
+  }
+
+  const batch = createBatcher();
+
+  for (const doc of allocsSnap.docs) {
+    const alloc = doc.data();
+    const uid = alloc.uid;
+    
+    if (!alloc.pairs || Object.keys(alloc.pairs).length === 0) continue;
+    
+    // Get base balance based on day
+    let baseBalance;
+    
+    if (dayNum === 1) {
+      // d1: Use previous week's endBalance
+      const prevWeekId = getPrevISOWeekId(weekId);
+      try {
+        const prevWbRef = db.collection('weeklyBalances').doc(`${prevWeekId}_${uid}`);
+        const prevWbSnap = await prevWbRef.get();
+        if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
+          baseBalance = prevWbSnap.data().endBalance;
+        } else {
+          // Fallback to allocation baseBalance
+          baseBalance = alloc.baseBalance || await ensureBalance(uid);
+        }
+      } catch (e) {
+        baseBalance = alloc.baseBalance || await ensureBalance(uid);
+      }
+    } else {
+      // d2, d3, d4: Use previous day's endBalance
+      const prevDay = `d${dayNum - 1}`;
+      const prevDayRef = db.collection('dailyReturns').doc(`${weekId}_${prevDay}_${uid}`);
+      const prevDaySnap = await prevDayRef.get();
+      
+      if (prevDaySnap.exists && prevDaySnap.data()?.endBalance != null) {
+        baseBalance = prevDaySnap.data().endBalance;
+      } else {
+        // Fallback: if previous day doesn't exist, use allocation baseBalance
+        baseBalance = alloc.baseBalance || await ensureBalance(uid);
+      }
+    }
+    
+    // Calculate weighted return based on user's allocation
+    let dailyReturnPct = 0;
+    let totalWeight = 0;
+    
+    for (const [symbol, weight] of Object.entries(alloc.pairs)) {
+      const w = Number(weight) || 0;
+      if (w <= 0) continue;
+      
+      // Get daily return for this symbol
+      const symbolData = dailyMarketData[symbol];
+      if (symbolData && typeof symbolData.returnPct === 'number') {
+        totalWeight += w;
+        dailyReturnPct += w * symbolData.returnPct;
+      }
+    }
+    
+    const finalReturnPct = totalWeight > 0 ? dailyReturnPct / totalWeight : 0;
+    const endBalance = baseBalance * (1 + finalReturnPct / 100);
+
+    // Save daily return for this user
+    const dailyReturnRef = db.collection('dailyReturns').doc(`${weekId}_d${dayNum}_${uid}`);
+    batch.set(dailyReturnRef, {
+      uid,
+      weekId,
+      day: `d${dayNum}`,
+      date: dateStr,
+      baseBalance: Number(baseBalance.toFixed(2)),
+      endBalance: Number(endBalance.toFixed(2)),
+      dailyReturnPct: Number(finalReturnPct.toFixed(4)),
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  await batch.flush();
+
+  // Log summary
+  const successCount = yahooResults.filter(r => r.data.returnPct !== null).length;
+  const totalCount = yahooResults.length;
+  
+  await logEvent({ 
+    category: 'market', 
+    action: 'fetchDailyMarketData', 
+    message: `Stored daily market data for ${weekId} ${dateStr} (d${dayNum}): ${successCount}/${totalCount} instruments, ${allocsSnap.size} users`, 
+    data: { 
+      weekId, 
+      date: dateStr,
+      day: `d${dayNum}`,
+      yahooCount: yahooResults.length,
+      successCount,
+      totalCount,
+      userCount: allocsSnap.size
+    } 
+  });
+  
   return null;
 });
 

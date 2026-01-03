@@ -5,6 +5,7 @@ import { auth } from '../firebase/config';
 import './Dashboard.css';
 import WeekStatus from '../components/WeekStatus';
 import PortfolioHistory from '../components/PortfolioHistory';
+import DailyPortfolioChart from '../components/DailyPortfolioChart';
 import MarketOverview from '../components/MarketOverview';
 import Ranking from '../components/Ranking';
 import UserAllocations from '../components/UserAllocations';
@@ -52,6 +53,7 @@ const Dashboard = () => {
                       <div className="info-cards overview-left-stack">
                         <MarketOverview />
                         <div id="portfolio-history-anchor"><PortfolioHistory /></div>
+                        <DailyPortfolioChart />
                         <UserAllocations />
                         <TopGainersLosers limit={5} />
                       </div>
