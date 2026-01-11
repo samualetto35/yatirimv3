@@ -2058,13 +2058,26 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
       const nextDay = new Date(targetDate);
       nextDay.setDate(nextDay.getDate() + 1);
       
-      const queryOptions = { 
-        period1: targetDate, 
-        period2: nextDay, 
-        interval: '1d' 
-      };
-      
-      const result = await yahooFinance.historical(ticker, queryOptions);
+      // Try chart() API first (recommended, not deprecated)
+      let result = null;
+      try {
+        result = await yahooFinance.chart(ticker, {
+          period1: Math.floor(targetDate.getTime() / 1000),
+          period2: Math.floor(nextDay.getTime() / 1000),
+          interval: '1d'
+        });
+        if (result && result.quotes) {
+          result = result.quotes; // Extract quotes array from chart response
+        }
+      } catch (chartError) {
+        // Fallback to historical() if chart() fails
+        const queryOptions = { 
+          period1: targetDate, 
+          period2: nextDay, 
+          interval: '1d' 
+        };
+        result = await yahooFinance.historical(ticker, queryOptions);
+      }
       
       if (result && result.length > 0) {
         const dayData = result[result.length - 1];
