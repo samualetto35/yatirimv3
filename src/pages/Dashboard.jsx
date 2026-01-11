@@ -5,7 +5,6 @@ import { auth } from '../firebase/config';
 import './Dashboard.css';
 import WeekStatus from '../components/WeekStatus';
 import PortfolioHistory from '../components/PortfolioHistory';
-import DailyPortfolioChart from '../components/DailyPortfolioChart';
 import MarketOverview from '../components/MarketOverview';
 import Ranking from '../components/Ranking';
 import UserAllocations from '../components/UserAllocations';
