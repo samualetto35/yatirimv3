@@ -376,7 +376,14 @@ exports.fetchTefasDataFromHangikredi = functions
   });
 
 // Scheduled: Every Friday 23:30 TRT (after US market close) - fetch market data for the current week
-exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('Europe/Istanbul').onRun(async () => {
+exports.fetchMarketData = functions
+  .runWith({
+    timeoutSeconds: 540, // 9 minutes - enough time for batch processing with delays
+    memory: '512MB'
+  })
+  .pubsub.schedule('30 23 * * FRI')
+  .timeZone('Europe/Istanbul')
+  .onRun(async () => {
   const yahooFinance = require('yahoo-finance2').default;
   const weekId = getISOWeekId();
   const marketRef = db.collection('marketData').doc(weekId);
@@ -405,9 +412,14 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
     // Fetch Yahoo Finance instruments with retry and rate limiting
     async function getYahooWeekOpenClose(ticker, retryCount = 0) {
       const maxRetries = 3;
-      const retryDelay = 2000; // 2 seconds between retries
+      const retryDelay = 5000; // 5 seconds between retries (increased)
       
       try {
+        // Add delay between requests to avoid rate limiting (even on first try)
+        if (retryCount === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay per request
+        }
+        
         const queryOptions = { period1: start, period2: end, interval: '1d' };
         const result = await yahooFinance.historical(ticker, queryOptions);
         if (!result || result.length === 0) {
@@ -429,8 +441,9 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
         const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
         
         if (isRateLimit && retryCount < maxRetries) {
-          console.warn(`⚠️  Rate limit hit for ${ticker}, retrying in ${retryDelay}ms... (${retryCount + 1}/${maxRetries})`);
-          await new Promise(resolve => setTimeout(resolve, retryDelay * (retryCount + 1))); // Exponential backoff
+          const waitTime = retryDelay * (retryCount + 1);
+          console.warn(`⚠️  Rate limit hit for ${ticker}, waiting ${waitTime}ms before retry (${retryCount + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, waitTime)); // Exponential backoff
           return getYahooWeekOpenClose(ticker, retryCount + 1);
         }
         
@@ -440,12 +453,12 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
     }
 
     // Fetch all Yahoo instruments ONLY (TEFAS already fetched at 23:25)
-    // Use batch processing with delays to avoid rate limiting
+    // Use batch processing with delays to avoid rate limiting (slower but safer)
     const yahooInstruments = getAllYahooTickers();
-    console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in batches...`);
+    console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in smaller batches...\n`);
     
-    const batchSize = 5; // Process 5 instruments at a time
-    const delayBetweenBatches = 500; // 500ms delay between batches
+    const batchSize = 2; // Reduced to 2 instruments per batch (more conservative)
+    const delayBetweenBatches = 5000; // Increased to 5 seconds between batches
     const yahooResults = [];
     
     for (let i = 0; i < yahooInstruments.length; i += batchSize) {
@@ -455,21 +468,23 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
       
       console.log(`   📦 Processing batch ${batchNum}/${totalBatches}: ${batch.map(b => b.code).join(', ')}`);
       
-      const batchPromises = batch.map(async (inst) => {
+      // Process sequentially within batch to avoid rate limits
+      const batchResults = [];
+      for (const inst of batch) {
         const data = await getYahooWeekOpenClose(inst.ticker);
-        return { code: inst.code, data };
-      });
+        batchResults.push({ code: inst.code, data });
+      }
       
-      const batchResults = await Promise.all(batchPromises);
       yahooResults.push(...batchResults);
       
       // Add delay between batches (except for the last batch)
       if (i + batchSize < yahooInstruments.length) {
+        console.log(`   ⏳ Waiting ${delayBetweenBatches}ms before next batch...`);
         await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
       }
     }
     
-    console.log(`   ✅ Completed fetching ${yahooResults.length} Yahoo instruments`);
+    console.log(`\n   ✅ Completed fetching ${yahooResults.length} Yahoo instruments`);
 
     // SAFE UPDATE: Only update Yahoo instruments, preserve all TEFAS data
     const updatedData = { ...existingData };
@@ -919,12 +934,12 @@ exports.adminFetchMarketData = functions
   // Fetch Yahoo Finance instruments with retry and rate limiting
   async function getYahooWeekOpenClose(ticker, retryCount = 0) {
     const maxRetries = 3;
-    const retryDelay = 3000; // Increased to 3 seconds
+    const retryDelay = 5000; // 5 seconds between retries (increased)
     
     try {
-      // Add delay between requests to avoid rate limiting
+      // Add delay between requests to avoid rate limiting (even on first try)
       if (retryCount === 0) {
-        await new Promise(resolve => setTimeout(resolve, 300)); // 300ms delay per request
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay per request
       }
       
       const queryOptions = { period1: start, period2: end, interval: '1d' };
@@ -963,8 +978,8 @@ exports.adminFetchMarketData = functions
   const yahooInstruments = getAllYahooTickers();
   console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in smaller batches...\n`);
   
-  const batchSize = 3; // Reduced from 5 to 3
-  const delayBetweenBatches = 2000; // Increased to 2 seconds between batches
+  const batchSize = 2; // Reduced to 2 instruments per batch (more conservative)
+  const delayBetweenBatches = 5000; // Increased to 5 seconds between batches
   const yahooResults = [];
   
   for (let i = 0; i < yahooInstruments.length; i += batchSize) {
