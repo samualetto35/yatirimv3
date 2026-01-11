@@ -384,7 +384,8 @@ exports.fetchMarketData = functions
   .pubsub.schedule('30 23 * * FRI')
   .timeZone('Europe/Istanbul')
   .onRun(async () => {
-  const yahooFinance = require('yahoo-finance2').default;
+  const YahooFinance = require('yahoo-finance2').default;
+  const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   const weekId = getISOWeekId();
   const marketRef = db.collection('marketData').doc(weekId);
 
@@ -926,7 +927,8 @@ exports.adminFetchMarketData = functions
   const { weekId } = data || {};
   const targetWeek = weekId || getISOWeekId();
   const marketRef = db.collection('marketData').doc(targetWeek);
-  const yahooFinance = require('yahoo-finance2').default;
+  const YahooFinance = require('yahoo-finance2').default;
+  const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   const end = new Date();
   const start = getMondayUTC(end);
 
@@ -2021,7 +2023,8 @@ exports.onMarketCorrectionsWrite = functions.firestore.document('marketCorrectio
 
 // Scheduled: Every weekday (Mon-Thu) 23:00 TRT - fetch daily market data for intraday visualization
 exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZone('Europe/Istanbul').onRun(async () => {
-  const yahooFinance = require('yahoo-finance2').default;
+  const YahooFinance = require('yahoo-finance2').default;
+  const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   const now = new Date();
   
   // Only run on weekdays (Monday=1, Thursday=4)
