@@ -885,7 +885,12 @@ exports.adminCloseWeek = functions.https.onCall(async (data, context) => {
   return { ok: true };
 });
 
-exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
+exports.adminFetchMarketData = functions
+  .runWith({
+    timeoutSeconds: 540, // 9 minutes - same as fetchTefasDataFromHangikredi
+    memory: '512MB'
+  })
+  .https.onCall(async (data, context) => {
   assertAdmin(context);
   const { weekId } = data || {};
   const targetWeek = weekId || getISOWeekId();
@@ -893,6 +898,11 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
   const yahooFinance = require('yahoo-finance2').default;
   const end = new Date();
   const start = getMondayUTC(end);
+
+  console.log(`\n${'='.repeat(70)}`);
+  console.log(`🚀 Admin: Fetching Yahoo Finance data for week ${targetWeek}`);
+  console.log(`   Date range: ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`);
+  console.log(`${'='.repeat(70)}\n`);
 
   // Get existing market data to preserve TEFAS data
   const existingData = (await marketRef.get()).data() || {};
@@ -903,12 +913,20 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
     );
   }).length;
 
+  console.log(`   Existing TEFAS instruments: ${existingTefasCount}`);
+  console.log(`   Preserving TEFAS data while fetching Yahoo data...\n`);
+
   // Fetch Yahoo Finance instruments with retry and rate limiting
   async function getYahooWeekOpenClose(ticker, retryCount = 0) {
     const maxRetries = 3;
-    const retryDelay = 2000;
+    const retryDelay = 3000; // Increased to 3 seconds
     
     try {
+      // Add delay between requests to avoid rate limiting
+      if (retryCount === 0) {
+        await new Promise(resolve => setTimeout(resolve, 300)); // 300ms delay per request
+      }
+      
       const queryOptions = { period1: start, period2: end, interval: '1d' };
       const result = await yahooFinance.historical(ticker, queryOptions);
       if (!result || result.length === 0) {
@@ -930,35 +948,49 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
       const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
       
       if (isRateLimit && retryCount < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, retryDelay * (retryCount + 1)));
+        const waitTime = retryDelay * (retryCount + 1);
+        console.warn(`⚠️  Rate limit hit for ${ticker}, waiting ${waitTime}ms before retry (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
         return getYahooWeekOpenClose(ticker, retryCount + 1);
       }
       
-      console.error(`Error fetching ${ticker}:`, errorMsg);
+      console.error(`❌ Error fetching ${ticker}:`, errorMsg);
       return { open: null, close: null, returnPct: null, error: errorMsg };
     }
   }
 
-  // Fetch all Yahoo instruments with batch processing
+  // Fetch all Yahoo instruments with batch processing (slower to avoid rate limits)
   const yahooInstruments = getAllYahooTickers();
-  const batchSize = 5;
-  const delayBetweenBatches = 500;
+  console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in smaller batches...\n`);
+  
+  const batchSize = 3; // Reduced from 5 to 3
+  const delayBetweenBatches = 2000; // Increased to 2 seconds between batches
   const yahooResults = [];
   
   for (let i = 0; i < yahooInstruments.length; i += batchSize) {
     const batch = yahooInstruments.slice(i, i + batchSize);
-    const batchPromises = batch.map(async (inst) => {
-      const data = await getYahooWeekOpenClose(inst.ticker);
-      return { code: inst.code, data };
-    });
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(yahooInstruments.length / batchSize);
     
-    const batchResults = await Promise.all(batchPromises);
+    console.log(`   📦 Processing batch ${batchNum}/${totalBatches}: ${batch.map(b => b.code).join(', ')}`);
+    
+    // Process sequentially within batch to avoid rate limits
+    const batchResults = [];
+    for (const inst of batch) {
+      const data = await getYahooWeekOpenClose(inst.ticker);
+      batchResults.push({ code: inst.code, data });
+    }
+    
     yahooResults.push(...batchResults);
     
+    // Add delay between batches (except for the last batch)
     if (i + batchSize < yahooInstruments.length) {
+      console.log(`   ⏳ Waiting ${delayBetweenBatches}ms before next batch...`);
       await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
     }
   }
+  
+  console.log(`\n   ✅ Completed fetching ${yahooResults.length} Yahoo instruments`);
 
   // SAFE UPDATE: Only update Yahoo instruments, preserve all TEFAS data
   const updatedData = { ...existingData };
@@ -999,6 +1031,10 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
   // Log summary
   const yahooSuccessCount = yahooResults.filter(r => r.data.returnPct !== null).length;
   const yahooTotalCount = yahooResults.length;
+  const yahooFailCount = yahooTotalCount - yahooSuccessCount;
+  
+  console.log(`\n📊 Results: ${yahooSuccessCount}/${yahooTotalCount} successful, ${yahooFailCount} failed`);
+  console.log(`✅ Updated marketData for ${targetWeek} (merge: true - TEFAS data preserved)\n`);
   
   await logEvent({ 
     category: 'admin', 
@@ -1008,12 +1044,22 @@ exports.adminFetchMarketData = functions.https.onCall(async (data, context) => {
       targetWeek, 
       yahooCount: yahooTotalCount,
       yahooSuccessCount,
+      yahooFailCount,
       tefasDataPreserved: existingTefasCount,
       tefasCount: existingTefasCount
-    }, 
+    },
+    outcome: yahooSuccessCount > 0 ? 'success' : 'partial',
     user: { email: context.auth.token.email } 
   });
-  return { ok: true, yahooSuccessCount, yahooTotalCount, tefasCount: existingTefasCount };
+  
+  return { 
+    ok: true, 
+    yahooSuccessCount, 
+    yahooTotalCount,
+    yahooFailCount,
+    tefasCount: existingTefasCount,
+    message: `Fetched ${yahooSuccessCount}/${yahooTotalCount} Yahoo instruments, preserved ${existingTefasCount} TEFAS instruments`
+  };
 });
 
 exports.adminSetMarketCorrection = functions.https.onCall(async (data, context) => {
