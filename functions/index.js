@@ -384,116 +384,154 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
   const end = new Date();
   const start = getMondayUTC(end);
 
-  // Fetch Yahoo Finance instruments
-  async function getYahooWeekOpenClose(ticker) {
-    try {
-      const queryOptions = { period1: start, period2: end, interval: '1d' };
-      const result = await yahooFinance.historical(ticker, queryOptions);
-      if (!result || result.length === 0) {
-        const quote = await yahooFinance.quote(ticker);
-        const price = quote.regularMarketPrice || 0;
-        return { open: price, close: price, returnPct: 0, source: 'quote' };
+  console.log(`\n${'='.repeat(70)}`);
+  console.log(`🚀 Fetching Yahoo Finance data for week ${weekId}`);
+  console.log(`   Date range: ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`);
+  console.log(`${'='.repeat(70)}\n`);
+
+  try {
+    // Get existing market data to preserve TEFAS data (already fetched at 23:25)
+    const existingData = (await marketRef.get()).data() || {};
+    const existingTefasCount = Object.keys(existingData).filter(key => {
+      const value = existingData[key];
+      return value && typeof value === 'object' && value.source && (
+        value.source.includes('hangikredi') || value.source.includes('tefas')
+      );
+    }).length;
+
+    console.log(`   Existing TEFAS instruments: ${existingTefasCount}`);
+    console.log(`   Note: TEFAS data already fetched at 23:25, preserving existing data\n`);
+
+    // Fetch Yahoo Finance instruments
+    async function getYahooWeekOpenClose(ticker) {
+      try {
+        const queryOptions = { period1: start, period2: end, interval: '1d' };
+        const result = await yahooFinance.historical(ticker, queryOptions);
+        if (!result || result.length === 0) {
+          const quote = await yahooFinance.quote(ticker);
+          const price = quote.regularMarketPrice || 0;
+          return { open: price, close: price, returnPct: 0, source: 'quote' };
+        }
+        const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
+        const filtered = sorted.filter(r => new Date(r.date) >= start);
+        const use = filtered.length ? filtered : sorted;
+        const first = use[0];
+        const last = use[use.length - 1];
+        const open = first.open || first.close || 0;
+        const close = last.close || last.open || 0;
+        const returnPct = open ? ((close - open) / open) * 100 : 0;
+        return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
+      } catch (error) {
+        console.error(`Error fetching ${ticker}:`, error.message);
+        return { open: null, close: null, returnPct: null, error: error.message };
       }
-      const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
-      const filtered = sorted.filter(r => new Date(r.date) >= start);
-      const use = filtered.length ? filtered : sorted;
-      const first = use[0];
-      const last = use[use.length - 1];
-      const open = first.open || first.close || 0;
-      const close = last.close || last.open || 0;
-      const returnPct = open ? ((close - open) / open) * 100 : 0;
-      return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
-    } catch (error) {
-      console.error(`Error fetching ${ticker}:`, error.message);
-      return { open: null, close: null, returnPct: null, error: error.message };
     }
+
+    // Fetch all Yahoo instruments ONLY (TEFAS already fetched at 23:25)
+    const yahooInstruments = getAllYahooTickers();
+    const yahooPromises = yahooInstruments.map(async (inst) => {
+      const data = await getYahooWeekOpenClose(inst.ticker);
+      return { code: inst.code, data };
+    });
+
+    const yahooResults = await Promise.all(yahooPromises);
+
+    // SAFE UPDATE: Only update Yahoo instruments, preserve all TEFAS data
+    const updatedData = { ...existingData };
+
+    // Only update Yahoo instruments
+    yahooResults.forEach(({ code, data }) => {
+      updatedData[code] = data;
+    });
+
+    // Update metadata (preserve existing sources array)
+    updatedData.fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+    if (!updatedData.sources) {
+      updatedData.sources = [];
+    }
+    if (!updatedData.sources.includes('yahoo-finance2')) {
+      updatedData.sources.push('yahoo-finance2');
+    }
+
+    // Update window info (preserve existing window if present)
+    if (!updatedData.window) {
+      updatedData.window = {
+        period1: start.toISOString(),
+        period2: end.toISOString(),
+        tz: 'UTC',
+        sources: updatedData.sources
+      };
+    } else {
+      // Update window but preserve sources array
+      updatedData.window = {
+        ...updatedData.window,
+        period2: end.toISOString(),
+        sources: updatedData.sources
+      };
+    }
+
+    // SAFE: Use merge: true to preserve existing data
+    await marketRef.set(updatedData, { merge: true });
+
+    console.log(`✅ Updated marketData for ${weekId} (merge: true - TEFAS data preserved)`);
+
+    // Verify TEFAS data is still there
+    const afterUpdate = (await marketRef.get()).data() || {};
+    const afterTefasCount = Object.keys(afterUpdate).filter(key => {
+      const value = afterUpdate[key];
+      return value && typeof value === 'object' && value.source && (
+        value.source.includes('hangikredi') || value.source.includes('tefas')
+      );
+    }).length;
+
+    if (afterTefasCount !== existingTefasCount) {
+      console.warn(`⚠️  Warning: TEFAS count changed from ${existingTefasCount} to ${afterTefasCount}`);
+    } else {
+      console.log(`✅ Verified: TEFAS data preserved (${afterTefasCount} instruments)`);
+    }
+
+    // Log summary
+    const yahooSuccessCount = yahooResults.filter(r => r.data.returnPct !== null).length;
+    const yahooTotalCount = yahooResults.length;
+    
+    await logEvent({ 
+      category: 'market', 
+      action: 'fetchMarketData', 
+      message: `Yahoo Finance data fetched for ${weekId}: ${yahooSuccessCount}/${yahooTotalCount} instruments`, 
+      data: { 
+        weekId, 
+        yahooCount: yahooTotalCount,
+        yahooSuccessCount,
+        tefasDataPreserved: afterTefasCount === existingTefasCount,
+        tefasCount: afterTefasCount
+      },
+      outcome: yahooSuccessCount > 0 ? 'success' : 'partial'
+    });
+    
+    console.log(`\n✅ Yahoo Finance data fetch completed successfully\n`);
+    return null;
+
+  } catch (error) {
+    console.error(`\n❌ Error fetching Yahoo Finance data:`, error);
+    console.error('Stack:', error.stack);
+
+    await logEvent({
+      category: 'automation',
+      action: 'fetchMarketData',
+      message: `Yahoo Finance fetch failed for ${weekId}: ${error.message}`,
+      data: {
+        weekId,
+        error: error.message,
+        stack: error.stack?.substring(0, 500),
+        source: 'yahoo-finance2'
+      },
+      severity: 'error',
+      outcome: 'failure'
+    });
+
+    // Don't throw - TEFAS data is already saved
+    return null;
   }
-
-  // Fetch all Yahoo instruments
-  const yahooInstruments = getAllYahooTickers();
-  const yahooPromises = yahooInstruments.map(async (inst) => {
-    const data = await getYahooWeekOpenClose(inst.ticker);
-    return { code: inst.code, data };
-  });
-
-  // Fetch all TEFAS instruments
-  // Note: TEFAS data should already be fetched by fetchTefasDataFromHangikredi at 23:25
-  // But we'll still try to fetch as fallback if needed
-  const tefasInstruments = getAllTefasCodes();
-  const tefasPromises = tefasInstruments.map(async (inst) => {
-    // Try to get from HangiKredi first (chart data for real weekly return)
-    try {
-      const hangikrediData = await tefasService.getFundDataFromHangikredi(inst.code, end, start, end);
-      if (hangikrediData && hangikrediData.returnPct !== null && hangikrediData.source === 'hangikredi-chart') {
-        // We have real weekly return from chart
-        return { 
-          code: inst.code, 
-          data: {
-            open: hangikrediData.open,
-            close: hangikrediData.close,
-            returnPct: hangikrediData.returnPct,
-            source: 'hangikredi-chart',
-            openDate: hangikrediData.openDate,
-            closeDate: hangikrediData.closeDate
-          }
-        };
-      }
-    } catch (e) {
-      console.log(`HangiKredi fallback for ${inst.code}: ${e.message}`);
-    }
-    // Fallback to old method
-    const data = await tefasService.getWeekOpenClose(inst.code, start, end);
-    return { code: inst.code, data };
-  });
-
-  // Wait for all data
-  const [yahooResults, tefasResults] = await Promise.all([
-    Promise.all(yahooPromises),
-    Promise.all(tefasPromises)
-  ]);
-
-  // Build market data object
-  const marketData = {
-    window: {
-      period1: start.toISOString(),
-      period2: end.toISOString(),
-      tz: 'UTC',
-      sources: ['yahoo-finance2', 'hangikredi']
-    },
-    fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-
-  // Add Yahoo results
-  yahooResults.forEach(({ code, data }) => {
-    marketData[code] = data;
-  });
-
-  // Add TEFAS results
-  tefasResults.forEach(({ code, data }) => {
-    marketData[code] = data;
-  });
-
-  // Save to Firestore
-  await marketRef.set(marketData, { merge: true });
-
-  // Log summary
-  const successCount = [...yahooResults, ...tefasResults].filter(r => r.data.returnPct !== null).length;
-  const totalCount = yahooResults.length + tefasResults.length;
-  
-  await logEvent({ 
-    category: 'market', 
-    action: 'fetchMarketData', 
-    message: `Stored market data for ${weekId}: ${successCount}/${totalCount} instruments`, 
-    data: { 
-      weekId, 
-      yahooCount: yahooResults.length,
-      tefasCount: tefasResults.length,
-      successCount,
-      totalCount
-    } 
-  });
-  
-  return null;
 });
 
 // Scheduled: Every Friday 23:45 TRT - settle week (after market data)
