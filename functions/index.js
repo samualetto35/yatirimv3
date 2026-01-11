@@ -402,8 +402,11 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
     console.log(`   Existing TEFAS instruments: ${existingTefasCount}`);
     console.log(`   Note: TEFAS data already fetched at 23:25, preserving existing data\n`);
 
-    // Fetch Yahoo Finance instruments
-    async function getYahooWeekOpenClose(ticker) {
+    // Fetch Yahoo Finance instruments with retry and rate limiting
+    async function getYahooWeekOpenClose(ticker, retryCount = 0) {
+      const maxRetries = 3;
+      const retryDelay = 2000; // 2 seconds between retries
+      
       try {
         const queryOptions = { period1: start, period2: end, interval: '1d' };
         const result = await yahooFinance.historical(ticker, queryOptions);
@@ -422,19 +425,51 @@ exports.fetchMarketData = functions.pubsub.schedule('30 23 * * FRI').timeZone('E
         const returnPct = open ? ((close - open) / open) * 100 : 0;
         return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
       } catch (error) {
-        console.error(`Error fetching ${ticker}:`, error.message);
-        return { open: null, close: null, returnPct: null, error: error.message };
+        const errorMsg = error.message || String(error);
+        const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
+        
+        if (isRateLimit && retryCount < maxRetries) {
+          console.warn(`⚠️  Rate limit hit for ${ticker}, retrying in ${retryDelay}ms... (${retryCount + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay * (retryCount + 1))); // Exponential backoff
+          return getYahooWeekOpenClose(ticker, retryCount + 1);
+        }
+        
+        console.error(`❌ Error fetching ${ticker}:`, errorMsg);
+        return { open: null, close: null, returnPct: null, error: errorMsg };
       }
     }
 
     // Fetch all Yahoo instruments ONLY (TEFAS already fetched at 23:25)
+    // Use batch processing with delays to avoid rate limiting
     const yahooInstruments = getAllYahooTickers();
-    const yahooPromises = yahooInstruments.map(async (inst) => {
-      const data = await getYahooWeekOpenClose(inst.ticker);
-      return { code: inst.code, data };
-    });
-
-    const yahooResults = await Promise.all(yahooPromises);
+    console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in batches...`);
+    
+    const batchSize = 5; // Process 5 instruments at a time
+    const delayBetweenBatches = 500; // 500ms delay between batches
+    const yahooResults = [];
+    
+    for (let i = 0; i < yahooInstruments.length; i += batchSize) {
+      const batch = yahooInstruments.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(yahooInstruments.length / batchSize);
+      
+      console.log(`   📦 Processing batch ${batchNum}/${totalBatches}: ${batch.map(b => b.code).join(', ')}`);
+      
+      const batchPromises = batch.map(async (inst) => {
+        const data = await getYahooWeekOpenClose(inst.ticker);
+        return { code: inst.code, data };
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      yahooResults.push(...batchResults);
+      
+      // Add delay between batches (except for the last batch)
+      if (i + batchSize < yahooInstruments.length) {
+        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+      }
+    }
+    
+    console.log(`   ✅ Completed fetching ${yahooResults.length} Yahoo instruments`);
 
     // SAFE UPDATE: Only update Yahoo instruments, preserve all TEFAS data
     const updatedData = { ...existingData };
@@ -1888,7 +1923,10 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
   const weekId = getISOWeekId(targetDate); // Use target date's week
 
   // Fetch Yahoo Finance instruments - get daily open/close and return
-  async function getYahooDailyReturn(ticker) {
+  async function getYahooDailyReturn(ticker, retryCount = 0) {
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds between retries
+    
     try {
       const nextDay = new Date(targetDate);
       nextDay.setDate(nextDay.getDate() + 1);
@@ -1927,26 +1965,49 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
         date: dateStr
       };
     } catch (error) {
-      console.error(`Error fetching daily ${ticker}:`, error.message);
+      const errorMsg = error.message || String(error);
+      const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
+      
+      if (isRateLimit && retryCount < maxRetries) {
+        console.warn(`⚠️  Rate limit hit for daily ${ticker}, retrying in ${retryDelay}ms... (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay * (retryCount + 1))); // Exponential backoff
+        return getYahooDailyReturn(ticker, retryCount + 1);
+      }
+      
+      console.error(`Error fetching daily ${ticker}:`, errorMsg);
       return {
         open: null,
         close: null,
         returnPct: null,
         source: 'error',
         date: dateStr,
-        error: error.message
+        error: errorMsg
       };
     }
   }
 
   // Fetch all Yahoo instruments (TEFAS will be added later)
+  // Use batch processing with delays to avoid rate limiting
   const yahooInstruments = getAllYahooTickers();
-  const yahooPromises = yahooInstruments.map(async (inst) => {
-    const data = await getYahooDailyReturn(inst.ticker);
-    return { code: inst.code, data };
-  });
-
-  const yahooResults = await Promise.all(yahooPromises);
+  const batchSize = 5; // Process 5 instruments at a time
+  const delayBetweenBatches = 500; // 500ms delay between batches
+  const yahooResults = [];
+  
+  for (let i = 0; i < yahooInstruments.length; i += batchSize) {
+    const batch = yahooInstruments.slice(i, i + batchSize);
+    const batchPromises = batch.map(async (inst) => {
+      const data = await getYahooDailyReturn(inst.ticker);
+      return { code: inst.code, data };
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    yahooResults.push(...batchResults);
+    
+    // Add delay between batches (except for the last batch)
+    if (i + batchSize < yahooInstruments.length) {
+      await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+    }
+  }
 
   // Build daily market data object
   const dailyMarketData = {
