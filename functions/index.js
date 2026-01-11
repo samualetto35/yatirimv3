@@ -373,7 +373,7 @@ exports.fetchTefasDataFromHangikredi = functions
       // Don't throw - let fetchMarketData still run
       return null;
     }
-  });
+});
 
 // Scheduled: Every Friday 23:30 TRT (after US market close) - fetch market data for the current week
 exports.fetchMarketData = functions
@@ -420,23 +420,39 @@ exports.fetchMarketData = functions
           await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay per request
         }
         
-        const queryOptions = { period1: start, period2: end, interval: '1d' };
-        const result = await yahooFinance.historical(ticker, queryOptions);
-        if (!result || result.length === 0) {
-          const quote = await yahooFinance.quote(ticker);
-          const price = quote.regularMarketPrice || 0;
-          return { open: price, close: price, returnPct: 0, source: 'quote' };
+        // Try chart() API first (recommended, not deprecated)
+        let result = null;
+        try {
+          result = await yahooFinance.chart(ticker, {
+            period1: Math.floor(start.getTime() / 1000),
+            period2: Math.floor(end.getTime() / 1000),
+            interval: '1d'
+          });
+          if (result && result.quotes) {
+            result = result.quotes; // Extract quotes array from chart response
+          }
+        } catch (chartError) {
+          // Fallback to historical() if chart() fails
+          console.log(`   ⚠️  chart() failed for ${ticker}, trying historical()...`);
+      const queryOptions = { period1: start, period2: end, interval: '1d' };
+          result = await yahooFinance.historical(ticker, queryOptions);
         }
-        const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
-        const filtered = sorted.filter(r => new Date(r.date) >= start);
-        const use = filtered.length ? filtered : sorted;
-        const first = use[0];
-        const last = use[use.length - 1];
-        const open = first.open || first.close || 0;
-        const close = last.close || last.open || 0;
-        const returnPct = open ? ((close - open) / open) * 100 : 0;
-        return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
-      } catch (error) {
+        
+      if (!result || result.length === 0) {
+        const quote = await yahooFinance.quote(ticker);
+        const price = quote.regularMarketPrice || 0;
+        return { open: price, close: price, returnPct: 0, source: 'quote' };
+      }
+      const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
+      const filtered = sorted.filter(r => new Date(r.date) >= start);
+      const use = filtered.length ? filtered : sorted;
+      const first = use[0];
+      const last = use[use.length - 1];
+      const open = first.open || first.close || 0;
+      const close = last.close || last.open || 0;
+      const returnPct = open ? ((close - open) / open) * 100 : 0;
+      return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
+    } catch (error) {
         const errorMsg = error.message || String(error);
         const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
         
@@ -454,7 +470,7 @@ exports.fetchMarketData = functions
 
     // Fetch all Yahoo instruments ONLY (TEFAS already fetched at 23:25)
     // Use batch processing with delays to avoid rate limiting (slower but safer)
-    const yahooInstruments = getAllYahooTickers();
+  const yahooInstruments = getAllYahooTickers();
     console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in smaller batches...\n`);
     
     const batchSize = 2; // Reduced to 2 instruments per batch (more conservative)
@@ -471,7 +487,7 @@ exports.fetchMarketData = functions
       // Process sequentially within batch to avoid rate limits
       const batchResults = [];
       for (const inst of batch) {
-        const data = await getYahooWeekOpenClose(inst.ticker);
+    const data = await getYahooWeekOpenClose(inst.ticker);
         batchResults.push({ code: inst.code, data });
       }
       
@@ -506,9 +522,9 @@ exports.fetchMarketData = functions
     // Update window info (preserve existing window if present)
     if (!updatedData.window) {
       updatedData.window = {
-        period1: start.toISOString(),
-        period2: end.toISOString(),
-        tz: 'UTC',
+      period1: start.toISOString(),
+      period2: end.toISOString(),
+      tz: 'UTC',
         sources: updatedData.sources
       };
     } else {
@@ -540,16 +556,16 @@ exports.fetchMarketData = functions
       console.log(`✅ Verified: TEFAS data preserved (${afterTefasCount} instruments)`);
     }
 
-    // Log summary
+  // Log summary
     const yahooSuccessCount = yahooResults.filter(r => r.data.returnPct !== null).length;
     const yahooTotalCount = yahooResults.length;
-    
-    await logEvent({ 
-      category: 'market', 
-      action: 'fetchMarketData', 
+  
+  await logEvent({ 
+    category: 'market', 
+    action: 'fetchMarketData', 
       message: `Yahoo Finance data fetched for ${weekId}: ${yahooSuccessCount}/${yahooTotalCount} instruments`, 
-      data: { 
-        weekId, 
+    data: { 
+      weekId, 
         yahooCount: yahooTotalCount,
         yahooSuccessCount,
         tefasDataPreserved: afterTefasCount === existingTefasCount,
@@ -559,7 +575,7 @@ exports.fetchMarketData = functions
     });
     
     console.log(`\n✅ Yahoo Finance data fetch completed successfully\n`);
-    return null;
+  return null;
 
   } catch (error) {
     console.error(`\n❌ Error fetching Yahoo Finance data:`, error);
@@ -932,39 +948,60 @@ exports.adminFetchMarketData = functions
   console.log(`   Preserving TEFAS data while fetching Yahoo data...\n`);
 
   // Fetch Yahoo Finance instruments with retry and rate limiting
+  // CRITICAL: Yahoo Finance has very aggressive rate limiting
+  // We need to be very conservative with delays
   async function getYahooWeekOpenClose(ticker, retryCount = 0) {
-    const maxRetries = 3;
-    const retryDelay = 5000; // 5 seconds between retries (increased)
+    const maxRetries = 5; // Increased retries
+    const retryDelay = 10000; // 10 seconds between retries (very conservative)
     
     try {
-      // Add delay between requests to avoid rate limiting (even on first try)
+      // CRITICAL: Always add delay before each request (even on first try)
+      // This prevents hitting rate limit immediately
       if (retryCount === 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay per request
+        await new Promise(resolve => setTimeout(resolve, 3000)); // 3 seconds delay per request
       }
       
-      const queryOptions = { period1: start, period2: end, interval: '1d' };
-      const result = await yahooFinance.historical(ticker, queryOptions);
-      if (!result || result.length === 0) {
-        const quote = await yahooFinance.quote(ticker);
-        const price = quote.regularMarketPrice || 0;
-        return { open: price, close: price, returnPct: 0, source: 'quote' };
+      // Try chart() API first (recommended, not deprecated)
+      let result = null;
+      try {
+        result = await yahooFinance.chart(ticker, {
+          period1: Math.floor(start.getTime() / 1000),
+          period2: Math.floor(end.getTime() / 1000),
+          interval: '1d'
+        });
+        if (result && result.quotes) {
+          result = result.quotes; // Extract quotes array from chart response
+        }
+      } catch (chartError) {
+        // Fallback to historical() if chart() fails
+        console.log(`   ⚠️  chart() failed for ${ticker}, trying historical()...`);
+    const queryOptions = { period1: start, period2: end, interval: '1d' };
+        result = await yahooFinance.historical(ticker, queryOptions);
       }
-      const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
-      const filtered = sorted.filter(r => new Date(r.date) >= start);
-      const use = filtered.length ? filtered : sorted;
-      const first = use[0];
-      const last = use[use.length - 1];
-      const open = first.open || first.close || 0;
-      const close = last.close || last.open || 0;
-      const returnPct = open ? ((close - open) / open) * 100 : 0;
+      
+    if (!result || result.length === 0) {
+        // Try quote as fallback
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Additional delay before quote
+        const quote = await yahooFinance.quote(ticker);
+      const price = quote.regularMarketPrice || 0;
+        return { open: price, close: price, returnPct: 0, source: 'quote' };
+    }
+    const sorted = result.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const filtered = sorted.filter(r => new Date(r.date) >= start);
+    const use = filtered.length ? filtered : sorted;
+    const first = use[0];
+    const last = use[use.length - 1];
+    const open = first.open || first.close || 0;
+    const close = last.close || last.open || 0;
+    const returnPct = open ? ((close - open) / open) * 100 : 0;
       return { open, close, returnPct: Number(returnPct.toFixed(4)), source: 'historical' };
     } catch (error) {
       const errorMsg = error.message || String(error);
       const isRateLimit = errorMsg.includes('Too Many Requests') || errorMsg.includes('429') || errorMsg.includes('rate limit');
       
       if (isRateLimit && retryCount < maxRetries) {
-        const waitTime = retryDelay * (retryCount + 1);
-        console.warn(`⚠️  Rate limit hit for ${ticker}, waiting ${waitTime}ms before retry (${retryCount + 1}/${maxRetries})`);
+        const waitTime = retryDelay * (retryCount + 1); // Exponential backoff: 10s, 20s, 30s, 40s, 50s
+        console.warn(`⚠️  Rate limit hit for ${ticker}, waiting ${(waitTime/1000).toFixed(0)}s before retry (${retryCount + 1}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         return getYahooWeekOpenClose(ticker, retryCount + 1);
       }
@@ -974,34 +1011,30 @@ exports.adminFetchMarketData = functions
     }
   }
 
-  // Fetch all Yahoo instruments with batch processing (slower to avoid rate limits)
+  // Fetch all Yahoo instruments (one at a time with delays)
   const yahooInstruments = getAllYahooTickers();
-  console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments in smaller batches...\n`);
+  console.log(`   Fetching ${yahooInstruments.length} Yahoo Finance instruments (one at a time with delays)...\n`);
   
-  const batchSize = 2; // Reduced to 2 instruments per batch (more conservative)
-  const delayBetweenBatches = 5000; // Increased to 5 seconds between batches
+  const delayBetweenRequests = 5000; // 5 seconds between each request
   const yahooResults = [];
   
-  for (let i = 0; i < yahooInstruments.length; i += batchSize) {
-    const batch = yahooInstruments.slice(i, i + batchSize);
-    const batchNum = Math.floor(i / batchSize) + 1;
-    const totalBatches = Math.ceil(yahooInstruments.length / batchSize);
+  for (let i = 0; i < yahooInstruments.length; i++) {
+    const inst = yahooInstruments[i];
+    console.log(`   📦 Processing ${i + 1}/${yahooInstruments.length}: ${inst.code} (${inst.ticker})`);
     
-    console.log(`   📦 Processing batch ${batchNum}/${totalBatches}: ${batch.map(b => b.code).join(', ')}`);
+    const data = await getYahooWeekOpenClose(inst.ticker);
+    yahooResults.push({ code: inst.code, data });
     
-    // Process sequentially within batch to avoid rate limits
-    const batchResults = [];
-    for (const inst of batch) {
-      const data = await getYahooWeekOpenClose(inst.ticker);
-      batchResults.push({ code: inst.code, data });
+    if (data.returnPct !== null) {
+      console.log(`      ✅ ${inst.code}: ${data.returnPct.toFixed(4)}%`);
+    } else {
+      console.log(`      ❌ ${inst.code}: Failed - ${data.error || 'Unknown error'}`);
     }
     
-    yahooResults.push(...batchResults);
-    
-    // Add delay between batches (except for the last batch)
-    if (i + batchSize < yahooInstruments.length) {
-      console.log(`   ⏳ Waiting ${delayBetweenBatches}ms before next batch...`);
-      await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+    // Add delay between requests (except for the last one)
+    if (i < yahooInstruments.length - 1) {
+      console.log(`   ⏳ Waiting ${delayBetweenRequests}ms before next request...\n`);
+      await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
     }
   }
   
@@ -2090,10 +2123,10 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
   for (let i = 0; i < yahooInstruments.length; i += batchSize) {
     const batch = yahooInstruments.slice(i, i + batchSize);
     const batchPromises = batch.map(async (inst) => {
-      const data = await getYahooDailyReturn(inst.ticker);
-      return { code: inst.code, data };
-    });
-    
+    const data = await getYahooDailyReturn(inst.ticker);
+    return { code: inst.code, data };
+  });
+
     const batchResults = await Promise.all(batchPromises);
     yahooResults.push(...batchResults);
     
