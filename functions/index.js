@@ -67,8 +67,37 @@ function parseWeekId(weekId) {
   return { year: Number(yearStr), week: Number(wn) };
 }
 
+function getISOWeeksInYear(year) {
+  // ISO week date: Dec 28 is always in the last ISO week of the year
+  const d = new Date(Date.UTC(year, 11, 28));
+  const id = getISOWeekId(d); // e.g. "2026-W53"
+  return parseWeekId(id).week;
+}
+
+function getPrevWeekIdFromWeekId(weekId) {
+  const { year, week } = parseWeekId(weekId);
+  if (!year || !week) return getPrevISOWeekId(); // fallback
+  if (week > 1) return `${year}-W${String(week - 1).padStart(2, '0')}`;
+  const prevYear = year - 1;
+  const lastWeek = getISOWeeksInYear(prevYear);
+  return `${prevYear}-W${String(lastWeek).padStart(2, '0')}`;
+}
+
+function getNextWeekIdFromWeekId(weekId) {
+  const { year, week } = parseWeekId(weekId);
+  if (!year || !week) return getNextISOWeekId(); // fallback
+  const lastWeek = getISOWeeksInYear(year);
+  if (week < lastWeek) return `${year}-W${String(week + 1).padStart(2, '0')}`;
+  const nextYear = year + 1;
+  return `${nextYear}-W01`;
+}
+
 function getWeekDatesFromWeekId(weekId) {
   // Convert weekId (e.g., "2026-W01") to Monday and Friday dates
+  //
+  // IMPORTANT: This project treats the "week end" as **Friday 21:00 UTC**
+  // (which is Saturday 00:00 in Europe/Istanbul). This matches the week
+  // documents created by `openNextWeekWindow` (endDate set to 21:00 UTC).
   const { year, week } = parseWeekId(weekId);
   
   // Get January 1st of the year
@@ -90,7 +119,8 @@ function getWeekDatesFromWeekId(weekId) {
   // Calculate Friday of the target week
   const targetFriday = new Date(targetMonday);
   targetFriday.setUTCDate(targetMonday.getUTCDate() + 4);
-  targetFriday.setUTCHours(23, 59, 59, 999);
+  // End of week = Friday 21:00 UTC (Saturday 00:00 Europe/Istanbul)
+  targetFriday.setUTCHours(21, 0, 0, 0);
   
   return { start: targetMonday, end: targetFriday };
 }
@@ -223,9 +253,12 @@ exports.openNextWeekWindow = functions.pubsub.schedule('58 23 * * FRI').timeZone
   const now = new Date();
   const nextWeekId = getNextISOWeekId(now);
 
-  // Open window Saturday 21:00 UTC, close Sunday 21:00 UTC
+  // Open window Friday night (trigger time), close Sunday 23:00 TRT (20:00 UTC)
   const openAt = admin.firestore.Timestamp.fromDate(now);
-  const closeDate = new Date(now); closeDate.setUTCHours(21); closeDate.setUTCDate(now.getUTCDate() + (now.getUTCDay() === 6 ? 1 : 1));
+  const closeDate = new Date(now);
+  const daysUntilSunday = (7 - closeDate.getUTCDay()) % 7; // Fri(5)->2
+  closeDate.setUTCDate(closeDate.getUTCDate() + daysUntilSunday);
+  closeDate.setUTCHours(20, 0, 0, 0);
   const closeAt = admin.firestore.Timestamp.fromDate(closeDate);
 
   // Week period Monday 00:00 to Friday 21:00 UTC
@@ -244,10 +277,11 @@ exports.openNextWeekWindow = functions.pubsub.schedule('58 23 * * FRI').timeZone
   return null;
 });
 
-// Scheduled: Every Sunday 21:00 UTC - close allocation window
+// Scheduled: Every Sunday 23:00 TRT - close allocation window for the upcoming week
 exports.closeCurrentAllocation = functions.pubsub.schedule('0 23 * * SUN').timeZone('Europe/Istanbul').onRun(async () => {
   const now = new Date();
-  const nextWeekId = getISOWeekId(new Date(now.getTime() + 7*86400000));
+  // On Sunday, the "upcoming" week is the next ISO week (starting Monday)
+  const nextWeekId = getNextISOWeekId(now);
   await upsertWeek(nextWeekId, { status: 'closed' });
   await logEvent({ category: 'automation', action: 'closeWindow', message: `Closed allocation window for ${nextWeekId}`, data: { nextWeekId } });
   return null;
@@ -576,8 +610,10 @@ exports.fetchMarketData = functions
   }
 });
 
-// Scheduled: Every Friday 23:45 TRT - settle week (after market data)
-exports.settleWeek = functions.pubsub.schedule('45 23 * * FRI').timeZone('Europe/Istanbul').onRun(async () => {
+// Scheduled: Saturday 00:05 TRT - settle previous trading week (after week end)
+// Week end is Friday 21:00 UTC (Saturday 00:00 TRT). Running a few minutes later
+// prevents premature settlement due to UTC-based date math.
+exports.settleWeek = functions.pubsub.schedule('5 0 * * SAT').timeZone('Europe/Istanbul').onRun(async () => {
   const now = new Date();
   const weekId = getISOWeekId(now);
   
@@ -655,7 +691,7 @@ exports.settleWeek = functions.pubsub.schedule('45 23 * * FRI').timeZone('Europe
     
     // Get actual previous week end balance from weeklyBalances collection
     // This is the correct baseBalance for this week, not the stored baseBalance
-    const prevWeekId = getPrevISOWeekId(weekId);
+    const prevWeekId = getPrevWeekIdFromWeekId(weekId);
     let baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     let prevWeekEndBalance = baseBalance; // fallback to current baseBalance
     
@@ -718,7 +754,7 @@ exports.settleWeek = functions.pubsub.schedule('45 23 * * FRI').timeZone('Europe
   try {
     const allBalancesSnap = await db.collection('balances').get();
     const cfBatch = createBatcher();
-    const prevWeekId = getPrevISOWeekId(weekId);
+    const prevWeekId = getPrevWeekIdFromWeekId(weekId);
     
     // Process carry-forward users in batches to avoid too many concurrent async operations
     const batchSize = 10;
@@ -799,7 +835,7 @@ exports.submitAllocation = functions.https.onCall(async (data, context) => {
   // Get baseBalance from previous week's endBalance if available
   // This ensures the balance chain continues correctly from week to week
   let baseBalance = await ensureBalance(uid);
-  const prevWeekId = getPrevISOWeekId(weekId);
+  const prevWeekId = getPrevWeekIdFromWeekId(weekId);
   
   // Try to get previous week's endBalance from weeklyBalances
   try {
@@ -1518,7 +1554,7 @@ exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
     
     // Get actual previous week end balance from weeklyBalances collection
     // This is the correct baseBalance for this week, not the stored baseBalance
-    const prevWeekId = getPrevISOWeekId(weekId);
+    const prevWeekId = getPrevWeekIdFromWeekId(weekId);
     let baseBalance = alloc.baseBalance ?? await ensureBalance(uid);
     let prevWeekEndBalance = baseBalance; // fallback to current baseBalance
     
@@ -1579,7 +1615,7 @@ exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
   try {
     const allBalancesSnap = await db.collection('balances').get();
     const cfBatch = createBatcher();
-    const prevWeekId = getPrevISOWeekId(weekId);
+    const prevWeekId = getPrevWeekIdFromWeekId(weekId);
     
     // Process carry-forward users in batches to avoid too many concurrent async operations
     const batchSize = 10;
@@ -1760,7 +1796,7 @@ async function recomputeFromWeek(weekId) {
       // No allocations this week: write carry-forward weeklyBalances for all users
       const allBalancesSnap = await db.collection('balances').get();
       const cfBatch = createBatcher();
-      const currentPrevWeekId = getPrevISOWeekId(wk.id);
+      const currentPrevWeekId = getPrevWeekIdFromWeekId(wk.id);
       
       // Process carry-forward users in batches to avoid too many concurrent async operations
       const batchSize = 10;
@@ -1842,7 +1878,7 @@ async function recomputeFromWeek(weekId) {
         balanceMap.set(uid, endBalance);
         
         // Get actual previous week end balance from weeklyBalances collection
-        const currentPrevWeekId = getPrevISOWeekId(wk.id);
+        const currentPrevWeekId = getPrevWeekIdFromWeekId(wk.id);
         let prevWeekEndBalance = actualBase; // fallback to current baseBalance
         
         try {
@@ -2146,7 +2182,7 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
     
     if (dayNum === 1) {
       // d1: Use previous week's endBalance
-      const prevWeekId = getPrevISOWeekId(weekId);
+      const prevWeekId = getPrevWeekIdFromWeekId(weekId);
       try {
         const prevWbRef = db.collection('weeklyBalances').doc(`${prevWeekId}_${uid}`);
         const prevWbSnap = await prevWbRef.get();
@@ -2231,3 +2267,249 @@ exports.fetchDailyMarketData = functions.pubsub.schedule('0 23 * * 1-4').timeZon
 });
 
 
+
+
+// ============================================================================
+// EMAIL OTOMASYONU - Resend Integration
+// ============================================================================
+const emailService = require('./emailService');
+
+/**
+ * Cumartesi Sabah Hatırlatması - Her Cumartesi 10:00 (Türkiye)
+ */
+exports.sendSaturdayReminder = functions.pubsub
+  .schedule('0 10 * * SAT')
+  .timeZone('Europe/Istanbul')
+  .onRun(async () => {
+    console.log('📧 Saturday reminder triggered');
+    
+    try {
+      const weekId = getNextISOWeekId();
+      const weekDoc = await db.collection('weeks').doc(weekId).get();
+      
+      if (!weekDoc.exists || weekDoc.data()?.status !== 'open') {
+        console.log(`Week ${weekId} not open, skipping Saturday reminder`);
+        return null;
+      }
+      
+      const users = await emailService.getAllUserEmails();
+      const template = emailService.EMAIL_TEMPLATES.saturdayReminder(weekId);
+      
+      const result = await emailService.sendBulkEmail({
+        users,
+        subject: template.subject,
+        html: template.html,
+        preferenceKey: 'weeklyReminder'
+      });
+      
+      await logEvent({
+        category: 'email',
+        action: 'saturdayReminder',
+        message: `Saturday reminder: ${result.sent} sent, ${result.failed} failed`,
+        weekId,
+        data: { weekId, ...result }
+      });
+      
+      return null;
+    } catch (error) {
+      console.error('Saturday reminder failed:', error);
+      await logEvent({
+        category: 'email',
+        action: 'saturdayReminder',
+        message: `Failed: ${error.message}`,
+        severity: 'error',
+        outcome: 'failure'
+      });
+      return null;
+    }
+  });
+
+/**
+ * Pazar Akşam Hatırlatması - Her Pazar 20:00 (Türkiye)
+ * Sadece tahsis yapmamış kullanıcılara
+ */
+exports.sendSundayReminder = functions.pubsub
+  .schedule('0 21 * * SUN')
+  .timeZone('Europe/Istanbul')
+  .onRun(async () => {
+    console.log('📧 Sunday reminder triggered');
+    
+    try {
+      const weekId = getNextISOWeekId();
+      const weekDoc = await db.collection('weeks').doc(weekId).get();
+      
+      if (!weekDoc.exists || weekDoc.data()?.status !== 'open') {
+        console.log(`Week ${weekId} not open, skipping Sunday reminder`);
+        return null;
+      }
+      
+      const usersWithoutAlloc = await emailService.getUsersWithoutAllocation(weekId);
+      
+      if (usersWithoutAlloc.length === 0) {
+        console.log('All users allocated, skipping Sunday reminder');
+        return null;
+      }
+      
+      const template = emailService.EMAIL_TEMPLATES.sundayReminder(weekId, 3);
+      
+      const result = await emailService.sendBulkEmail({
+        users: usersWithoutAlloc,
+        subject: template.subject,
+        html: template.html,
+        preferenceKey: 'sundayReminder'
+      });
+      
+      await logEvent({
+        category: 'email',
+        action: 'sundayReminder',
+        message: `Sunday reminder: ${result.sent} sent to users without allocation`,
+        weekId,
+        data: { weekId, usersWithoutAlloc: usersWithoutAlloc.length, ...result }
+      });
+      
+      return null;
+    } catch (error) {
+      console.error('Sunday reminder failed:', error);
+      await logEvent({
+        category: 'email',
+        action: 'sundayReminder',
+        message: `Failed: ${error.message}`,
+        severity: 'error',
+        outcome: 'failure'
+      });
+      return null;
+    }
+  });
+
+/**
+ * Duyuru Email Trigger - Yeni duyuru oluşturulduğunda
+ */
+exports.onAnnouncementCreate = functions.firestore
+  .document('announcements/{announcementId}')
+  .onCreate(async (snap, context) => {
+    console.log('📧 New announcement, sending emails...');
+    
+    try {
+      const data = snap.data();
+      
+      if (data.hidden) {
+        console.log('Announcement hidden, skipping email');
+        return null;
+      }
+      
+      const template = emailService.EMAIL_TEMPLATES.announcement(
+        data.title || 'Yeni Duyuru',
+        data.body || '',
+        data.link || null
+      );
+      
+      const users = await emailService.getAllUserEmails();
+      
+      const result = await emailService.sendBulkEmail({
+        users,
+        subject: template.subject,
+        html: template.html,
+        preferenceKey: 'announcements'
+      });
+      
+      await logEvent({
+        category: 'email',
+        action: 'announcementEmail',
+        message: `Announcement email: ${result.sent} sent`,
+        data: { announcementId: context.params.announcementId, title: data.title, ...result }
+      });
+      
+      return null;
+    } catch (error) {
+      console.error('Announcement email failed:', error);
+      return null;
+    }
+  });
+
+/**
+ * Manuel Email Test - HTTP endpoint
+ */
+exports.testEmailService = functions.https.onRequest(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Authorization required' });
+    return;
+  }
+  
+  try {
+    const token = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    
+    if (!ADMIN_EMAILS.includes(decodedToken.email)) {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+    
+    const { type } = req.query;
+    const weekId = getNextISOWeekId();
+    
+    let template;
+    switch (type) {
+      case 'saturday':
+        template = emailService.EMAIL_TEMPLATES.saturdayReminder(weekId);
+        break;
+      case 'sunday':
+        template = emailService.EMAIL_TEMPLATES.sundayReminder(weekId, 3);
+        break;
+      case 'announcement':
+        template = emailService.EMAIL_TEMPLATES.announcement('Test Duyuru', 'Bu bir test emailidir.', null);
+        break;
+      default:
+        res.status(400).json({ error: 'Use type: saturday, sunday, or announcement' });
+        return;
+    }
+    
+    const result = await emailService.sendEmail({
+      to: decodedToken.email,
+      subject: `[TEST] ${template.subject}`,
+      html: template.html.replace(/\{\{username\}\}/g, 'Test Kullanıcı')
+    });
+    
+    res.json({ success: result.success, type, weekId, sentTo: decodedToken.email });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Admin Manuel Email Gönderme
+ */
+exports.sendManualEmail = functions.https.onCall(async (data, context) => {
+  if (!context.auth || !ADMIN_EMAILS.includes(context.auth.token.email)) {
+    throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+  }
+  
+  const { subject, html, testMode } = data;
+  
+  if (!subject || !html) {
+    throw new functions.https.HttpsError('invalid-argument', 'Subject and HTML required');
+  }
+  
+  if (testMode) {
+    const result = await emailService.sendEmail({
+      to: context.auth.token.email,
+      subject: `[TEST] ${subject}`,
+      html
+    });
+    return { testMode: true, ...result };
+  }
+  
+  const users = await emailService.getAllUserEmails();
+  const result = await emailService.sendBulkEmail({ users, subject, html });
+  
+  await logEvent({
+    category: 'email',
+    action: 'manualEmail',
+    message: `Manual email: ${result.sent} sent`,
+    user: context.auth.uid,
+    data: result
+  });
+  
+  return result;
+});

@@ -2,6 +2,7 @@
   min-height: 100vh;
   background: #ffffff;
   padding: 2rem;
+  overflow-x: hidden; /* prevent accidental horizontal scroll on mobile */
 }
 
 .dashboard-header {
@@ -107,6 +108,9 @@
 /* Masonry layout only for overview */
 /* Split layout: left column (stack), right column (news) */
 .overview-grid { display: grid; gap: 1.5rem; }
+.overview-grid, .overview-left, .overview-right { min-width: 0; }
+.overview-left .overview-left-stack { min-width: 0; }
+.overview-left .overview-left-stack > * { min-width: 0; max-width: 100%; }
 .overview-left .overview-left-stack > * { margin-bottom: 1.5rem; }
 .overview-right .info-card { position: sticky; top: 12px; }
 .overview-right .info-card.no-sticky { position: static; }
@@ -148,6 +152,13 @@
 /* Hide TradingView branding inside frameless cards when present */
 .info-card.no-frame .tradingview-widget-copyright { display: none !important; }
 
+/* Make the ticker tape banner non-interactive (no click, no hover-pause) */
+.tv-ticker-tape .tradingview-widget-container,
+.tv-ticker-tape .tradingview-widget-container * {
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
 /* PortfolioHistory chart + mini grid */
 .ph-chart {
   -webkit-tap-highlight-color: transparent;
@@ -179,7 +190,8 @@
 
 /* New chip/button styles for dashboard */
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
-.chip-pill { display: inline-block; padding: 6px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+.chip-pill { display: inline-block; padding: 6px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; border: none; outline: none; }
+button.chip-pill { appearance: none; -webkit-appearance: none; }
 .chip-blue { background: #e7f1ff; color: #0d6efd; }
 .chip-gray { background: #f1f3f5; color: #495057; }
 .chip-green { background: #e6f4ea; color: #1e7e34; box-shadow: 0 1px 12px rgba(46, 125, 50, 0.05);}
@@ -459,6 +471,14 @@
 /* TradingView-like chart container */
 .tv-chart { width: 100%; max-width: 100%; overflow: hidden; }
 .tv-chart .u-wrap, .tv-chart .uplot { width: 100% !important; max-width: 100% !important; }
+
+/* uPlot: don't show cursor line until the chart is actually hovered */
+.tv-chart .u-cursor-x {
+  opacity: 0;
+}
+.tv-chart:hover .u-cursor-x {
+  opacity: 1;
+}
 .tv-chart canvas { max-width: 100% !important; }
 @media (max-width: 768px) { .tv-chart { height: auto; } }
 

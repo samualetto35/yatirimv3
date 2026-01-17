@@ -50,11 +50,10 @@ const Dashboard = () => {
                   <div className="overview-grid">
                     <div className="overview-left">
                       <div className="info-cards overview-left-stack">
-                        <MarketOverview />
-                        <div id="portfolio-history-anchor"><PortfolioHistory /></div>
-                        <DailyPortfolioChart />
                         <UserAllocations />
+                        <div id="portfolio-history-anchor"><PortfolioHistory /></div>
                         <TopGainersLosers limit={5} />
+                        <MarketOverview />
                       </div>
                     </div>
                     <div className="overview-right">

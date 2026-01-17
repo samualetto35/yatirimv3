@@ -26,19 +26,7 @@ const MarketOverview = () => {
 
   if (!weekId) return null;
 
-  const Row = ({ sym, rec }) => {
-    if (!rec) return null;
-    const pct = Number(rec.returnPct ?? rec.resultReturnPct ?? ((rec.close && rec.open) ? ((rec.close-rec.open)/rec.open)*100 : 0));
-    return (
-      <div className="info-item">
-        <span style={{ fontWeight: 600 }}>{sym}</span>
-        <span>
-          Open ${Number(rec.open).toFixed(2)} | Close ${Number(rec.close).toFixed(2)}
-          <Badge color={pct >= 0 ? 'green' : 'red'}>{pct.toFixed(2)}%</Badge>
-        </span>
-      </div>
-    );
-  };
+  const getPct = (rec) => Number(rec?.returnPct ?? rec?.resultReturnPct ?? ((rec?.close && rec?.open) ? ((rec.close - rec.open) / rec.open) * 100 : 0));
 
   // Extract all instruments from market data (exclude metadata fields)
   const reservedFields = new Set(['window', 'fetchedAt', 'createdAt', 'updatedAt', 'tz', 'source', 'pairs']);
@@ -49,16 +37,42 @@ const MarketOverview = () => {
 
   return (
     <div className="info-card">
-      <h3>Market Overview <Badge>Week {weekId}</Badge></h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>Market Overview</h3>
+        <span className="chip-pill chip-gray">{weekId || '—'}</span>
+      </div>
       {!md ? (
         <p style={{ color: '#6c757d' }}>No market data available.</p>
       ) : instruments.length === 0 ? (
         <p style={{ color: '#6c757d' }}>No instrument data available.</p>
       ) : (
-        <div>
-          {instruments.map(({ symbol, data }) => (
-            <Row key={symbol} sym={symbol} rec={data} />
-          ))}
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ minWidth: 420 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, background: '#f8fafc', border: '1px solid #eef2f7', color: '#6b7280', fontWeight: 800, fontSize: 12 }}>
+              <div>Pair</div>
+              <div>Open</div>
+              <div>Close</div>
+              <div style={{ textAlign: 'right' }}>Return</div>
+            </div>
+            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+              {instruments.map(({ symbol, data }) => {
+                const pct = getPct(data);
+                const open = data?.open != null ? Number(data.open) : null;
+                const close = data?.close != null ? Number(data.close) : null;
+                const col = pct > 0 ? 'green' : (pct < 0 ? 'red' : 'gray');
+                return (
+                  <div key={symbol} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, border: '1px solid #eef2f7', background: '#ffffff', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 900 }}>{symbol}</div>
+                    <div style={{ color: '#111827', fontWeight: 500 }}>{open != null ? `$${open.toFixed(2)}` : '—'}</div>
+                    <div style={{ color: '#111827', fontWeight: 500 }}>{close != null ? `$${close.toFixed(2)}` : '—'}</div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Badge color={col}>{Number.isFinite(pct) ? pct.toFixed(2) : '—'}%</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           {md.window && (
             <p style={{ color: '#6c757d', marginTop: 8 }}>Window: {md.window.period1} → {md.window.period2} (UTC)</p>
           )}

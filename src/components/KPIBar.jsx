@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getUserBalance, getWeeklyBalancesByUser, getLeaderboardByLatestWeek } from '../services/portfolioService';
 import { getActiveOrUpcomingWeek } from '../services/weekService';
+import MiniPortfolioSparkline from './MiniPortfolioSparkline';
 
 const KPIBar = () => {
   const { currentUser, userDoc } = useAuth();
@@ -16,6 +17,8 @@ const KPIBar = () => {
   const [rank, setRank] = useState(null);
   const [rankWeek, setRankWeek] = useState(null);
   const [rankTotal, setRankTotal] = useState(null);
+  const [sparkRows, setSparkRows] = useState([]); // weeklyBalances rows
+  const [sparkRange, setSparkRange] = useState('ALL'); // ALL -> 4W -> YTD
 
   useEffect(() => {
     let isMounted = true;
@@ -24,7 +27,8 @@ const KPIBar = () => {
       try {
         const [balRes, wbsRes] = await Promise.allSettled([
           getUserBalance(currentUser.uid),
-          getWeeklyBalancesByUser(currentUser.uid, 12),
+          // Fetch a lot for the sparkline so it covers "all time" in practice
+          getWeeklyBalancesByUser(currentUser.uid, 520),
         ]);
         if (!isMounted) return;
         const bal = balRes.status === 'fulfilled' ? balRes.value : null;
@@ -48,6 +52,7 @@ const KPIBar = () => {
         setBalance(latestBalance);
         setLatestPct(lastPctVal);
         setLast4Pct(last4PctVal);
+        setSparkRows(Array.isArray(wbs) ? wbs : []);
       } catch (e) {
         // fallbacks remain null
       } finally {
@@ -56,6 +61,31 @@ const KPIBar = () => {
     })();
     return () => { isMounted = false; };
   }, [currentUser]);
+
+  const sparkLabel = sparkRange === 'ALL' ? 'Tümü' : (sparkRange === '4W' ? '4H' : 'YTD');
+  const sparkValues = useMemo(() => {
+    const rows = Array.isArray(sparkRows) ? sparkRows : [];
+    if (!rows.length) return [];
+    if (sparkRange === 'ALL') {
+      return rows.map(r => Number(r?.endBalance)).filter(v => Number.isFinite(v));
+    }
+    if (sparkRange === '4W') {
+      return rows.slice(-4).map(r => Number(r?.endBalance)).filter(v => Number.isFinite(v));
+    }
+    // YTD: filter by year prefix of last weekId
+    const lastId = String(rows[rows.length - 1]?.weekId || '');
+    const m = /^(\d{4})-W\d{1,2}$/.exec(lastId);
+    if (!m) return rows.map(r => Number(r?.endBalance)).filter(v => Number.isFinite(v));
+    const y = m[1];
+    return rows
+      .filter(r => String(r?.weekId || '').startsWith(`${y}-W`))
+      .map(r => Number(r?.endBalance))
+      .filter(v => Number.isFinite(v));
+  }, [sparkRows, sparkRange]);
+
+  const cycleSparkRange = () => {
+    setSparkRange(prev => (prev === 'ALL' ? '4W' : (prev === '4W' ? 'YTD' : 'ALL')));
+  };
 
   // Load active/upcoming week and manage countdown (choose nearest future deadline)
   useEffect(() => {
@@ -193,7 +223,16 @@ const KPIBar = () => {
         <div className="kpi-card">
           <div className="kpi-label">Portföyünüz</div>
           <div className="kpi-value mono">{loading ? '…' : fmtMoney(balance)}</div>
-          <div className="kpi-note chip-pill chip-gray kpi-chip-topright">Haftalık</div>
+          <MiniPortfolioSparkline values={sparkValues} baseline={100000} />
+          <button
+            type="button"
+            className="kpi-note chip-pill chip-gray kpi-chip-topright"
+            onClick={cycleSparkRange}
+            style={{ cursor: 'pointer' }}
+            title="Grafik aralığını değiştir"
+          >
+            {sparkLabel}
+          </button>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Geçen Hafta</div>

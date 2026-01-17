@@ -23,6 +23,7 @@ const PortfolioHistory = () => {
   const [pairWinPct, setPairWinPct] = useState(null);
   const [pairEvents, setPairEvents] = useState(0);
   const [openStats, setOpenStats] = useState(false);
+  const [openWeekList, setOpenWeekList] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -184,22 +185,44 @@ const PortfolioHistory = () => {
       <PortfolioChart data={chartData} />
 
       <div style={{ marginTop: 10 }}>
-        <table className="ph-table">
-          <thead>
-            <tr>
-              <th className="ph-cell">Hafta</th>
-              <th className="ph-cell">Haftalık %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {chartData.map(d => (
-              <tr key={`row_${d.weekId}`} className="ph-row">
-                <td className="ph-cell">{d.weekId}</td>
-                <td className="ph-cell pct" style={{ color: Number(d.resultReturnPct) >= 0 ? '#16a34a' : '#dc2626' }}>{fmtPct(d.resultReturnPct)}</td>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{ fontWeight: 800, color: '#111827' }}>Haftalık Getiriler</div>
+          <button
+            type="button"
+            className={`faq-toggle ${openWeekList ? 'open' : ''}`}
+            aria-expanded={openWeekList}
+            onClick={() => setOpenWeekList(o => !o)}
+            title={openWeekList ? 'Kapat' : 'Aç'}
+          >
+            ⌃
+          </button>
+        </div>
+
+        {openWeekList && (
+          <table className="ph-table">
+            <thead>
+              <tr>
+                <th className="ph-cell">Hafta</th>
+                <th className="ph-cell">Getiri</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {chartData.map(d => (
+                <tr key={`row_${d.weekId}`} className="ph-row">
+                  <td className="ph-cell">{d.weekId}</td>
+                  <td
+                    className="ph-cell pct"
+                    style={{
+                      color: Number(d.resultReturnPct) > 0 ? '#16a34a' : (Number(d.resultReturnPct) < 0 ? '#dc2626' : '#9ca3af')
+                    }}
+                  >
+                    {fmtPct(d.resultReturnPct)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

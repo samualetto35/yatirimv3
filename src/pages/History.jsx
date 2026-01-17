@@ -34,6 +34,26 @@ const History = () => {
       .join(' · ');
   };
 
+  const renderAlloc = (s) => {
+    if (!s || s === '—') return '—';
+    const parts = String(s).split(' · ').filter(Boolean);
+    if (!parts.length) return '—';
+    return (
+      <span>
+        {parts.map((p, idx) => {
+          const [sym, ...rest] = p.split(' ');
+          const pct = rest.join(' ').trim();
+          return (
+            <span key={`alloc_${idx}_${sym}`}>
+              <strong>{sym}</strong> <span>{pct}</span>
+              {idx < parts.length - 1 ? <span style={{ color: '#9ca3af' }}> · </span> : null}
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
+
   const joinedRows = useMemo(() => {
     const byWb = new Map(wb.map(r => [r.weekId, r]));
     const byAlloc = new Map(allocs.map(r => [r.weekId, r]));
@@ -115,11 +135,11 @@ const History = () => {
           <table className="table">
             <thead>
               <tr>
-                <th>Week</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('base')}>Base</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('end')}>End</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('pct')}>Weekly %</th>
-                <th>Allocation</th>
+                <th>Hafta</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('base')}>Başlangıç</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('end')}>Bitiş</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => nextSort('pct')}>Getiri</th>
+                <th>Dağılım</th>
               </tr>
             </thead>
             <tbody>
@@ -129,8 +149,14 @@ const History = () => {
                     <td>{row.weekId}</td>
                     <td>{row.baseBalance != null ? `$${Number(row.baseBalance).toLocaleString()}` : '—'}</td>
                     <td>{row.endBalance != null ? `$${Number(row.endBalance).toLocaleString()}` : '—'}</td>
-                    <td style={{ color: Number(row.resultReturnPct || 0) >= 0 ? '#16a34a' : '#dc2626' }}>{row.resultReturnPct != null ? `${Number(row.resultReturnPct).toFixed(2)}%` : '—'}</td>
-                    <td>{row.allocation || '—'}</td>
+                    <td style={{ color: Number(row.resultReturnPct || 0) > 0 ? '#16a34a' : (Number(row.resultReturnPct || 0) < 0 ? '#dc2626' : '#9ca3af') }}>
+                      {row.resultReturnPct != null ? `${Number(row.resultReturnPct).toFixed(2)}%` : '—'}
+                    </td>
+                    <td>
+                      <div style={{ whiteSpace: 'nowrap', overflowX: 'auto', WebkitOverflowScrolling: 'touch', maxWidth: 520 }}>
+                        {renderAlloc(row.allocation || '—')}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

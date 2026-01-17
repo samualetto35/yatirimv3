@@ -17,14 +17,23 @@ export const getWeeklyBalancesByUser = async (uid, max = 52) => {
   if (!uid) return [];
   const ref = collection(db, 'weeklyBalances');
   try {
-    const q = query(ref, where('uid', '==', uid), orderBy('weekId', 'asc'), limit(max));
+    // Fetch most-recent weeks first, then return ascending for UI consumers
+    const q = query(ref, where('uid', '==', uid), orderBy('weekId', 'desc'), limit(max));
     const snap = await getDocs(q);
     const rows = snap.docs.map(d => d.data());
-    if (rows.length > 0) return rows;
+    if (rows.length > 0) {
+      return rows.sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+    }
     // If no rows, attempt a broader fetch and filter client-side (dev fallback)
     try {
       const allSnap = await getDocs(ref);
-      return allSnap.docs.map(d => d.data()).filter(r => r?.uid === uid).sort((a, b) => (a.weekId || '').localeCompare(b.weekId || '')).slice(0, max);
+      const allRows = allSnap.docs
+        .map(d => d.data())
+        .filter(r => r?.uid === uid)
+        .sort((a, b) => (b.weekId || '').localeCompare(a.weekId || ''))
+        .slice(0, max)
+        .sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+      return allRows;
     } catch (_) {
       return rows;
     }
@@ -33,13 +42,22 @@ export const getWeeklyBalancesByUser = async (uid, max = 52) => {
     // Index not ready → fallback without orderBy then sort client-side
     try {
       const snap = await getDocs(query(ref, where('uid', '==', uid)));
-      const rows = snap.docs.map(d => d.data()).sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+      const rows = snap.docs
+        .map(d => d.data())
+        .sort((a, b) => (b.weekId || '').localeCompare(a.weekId || ''))
+        .slice(0, max)
+        .sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
       if (rows.length > 0) return rows;
       // As last resort, fetch all and filter
       try {
         const allSnap = await getDocs(ref);
-        const allRows = allSnap.docs.map(d => d.data()).filter(r => r?.uid === uid).sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
-        if (allRows.length > 0) return allRows.slice(0, max);
+        const allRows = allSnap.docs
+          .map(d => d.data())
+          .filter(r => r?.uid === uid)
+          .sort((a, b) => (b.weekId || '').localeCompare(a.weekId || ''))
+          .slice(0, max)
+          .sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+        if (allRows.length > 0) return allRows;
         // Try direct docId lookup by recent weeks
         try {
           const recent = await getRecentSettledWeeks(Math.min(max, 60));

@@ -59,21 +59,31 @@ const UserAllocations = () => {
     return rows.find(r => r.weekId === activeWeekId) || null;
   }, [rows, activeWeekId]);
 
-  const fmtPairs = (pairs) => {
-    const parts = [];
+  const renderPairs = (pairs) => {
+    const items = [];
     if (pairs) {
       Object.entries(pairs).forEach(([sym, w]) => {
         const pct = Number(w || 0) * 100;
-        if (pct > 0) parts.push(`${sym} ${pct.toFixed(2)}%`);
+        if (pct > 0) items.push({ sym, pct });
       });
     }
-    return parts.length ? parts.join(' · ') : '—';
+    if (!items.length) return '—';
+    return (
+      <span>
+        {items.map((it, idx) => (
+          <span key={`pair_${it.sym}`}>
+            <strong>{it.sym}</strong> <span>{it.pct.toFixed(2)}%</span>
+            {idx < items.length - 1 ? <span style={{ color: '#9ca3af' }}> · </span> : null}
+          </span>
+        ))}
+      </span>
+    );
   };
 
   const hasActive = !!activeAlloc;
 
   return (
-    <div className="info-card" style={{ marginBottom: 0 }}>
+    <div className="info-card" style={{ maxWidth: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>Aktif Yatırımım</h3>
         <span className={`chip-pill ${hasActive ? 'chip-green' : 'chip-gray'}`}>{hasActive ? 'Var' : 'Yok'}</span>
@@ -82,19 +92,20 @@ const UserAllocations = () => {
         <p style={{ color: '#6c757d' }}>Şu anda açık haftaya ait bir yatırım tercihiniz bulunmuyor.</p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-          <div className="ph-row" style={{ display: 'grid', gridTemplateColumns: '160px 1fr', alignItems: 'center' }}>
+          <div className="ph-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) minmax(0, 1fr)', alignItems: 'center', overflow: 'hidden' }}>
             <div className="ph-cell" style={{ fontWeight: 800 }}>Hafta</div>
-            <div className="ph-cell">{activeAlloc.weekId}</div>
+            <div className="ph-cell" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeAlloc.weekId}</div>
           </div>
-          <div className="ph-row" style={{ display: 'grid', gridTemplateColumns: '160px 1fr', alignItems: 'center' }}>
+          <div className="ph-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) minmax(0, 1fr)', alignItems: 'center', overflow: 'hidden' }}>
             <div className="ph-cell" style={{ fontWeight: 800 }}>Allocation</div>
-            <div className="ph-cell">{fmtPairs(activeAlloc.pairs)}</div>
+            <div className="ph-cell" style={{ minWidth: 0, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <div style={{ whiteSpace: 'nowrap', width: 'max-content', maxWidth: '100%' }}>
+                {renderPairs(activeAlloc.pairs)}
+              </div>
+            </div>
           </div>
         </div>
       )}
-      <p style={{ color: '#6b7280', fontSize: 12, marginTop: 10 }}>
-        Aktif yatırımlarınızın getirileri Cuma kapanışından sonra akşam hesaplanır ve bakiyeniz güncellenir.
-      </p>
     </div>
   );
 };

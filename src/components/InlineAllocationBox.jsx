@@ -17,6 +17,7 @@ const InlineAllocationBox = () => {
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState([{ symbol: 'XU100', weight: '' }]);
   const [message, setMessage] = useState('');
+  const [resultModal, setResultModal] = useState(null); // { type: 'success'|'error', weekId, pairs, errorMsg }
   
   // Get all available instruments
   const pairOptions = useMemo(() => {
@@ -70,6 +71,7 @@ const InlineAllocationBox = () => {
   const total = useMemo(() => rows.reduce((acc, r) => acc + numberOrZero(r.weight), 0), [rows]);
   const canTrade = week?.status === 'open';
   const canSave = canTrade && total === 100 && !saving && !!currentUser;
+  const hasActiveAlloc = canTrade && hasExisting;
 
   const onSave = async () => {
     if (!canSave) return;
@@ -83,10 +85,9 @@ const InlineAllocationBox = () => {
       }, {});
       const payload = { weekId: week.id, pairs };
       await submitAllocation(payload);
-      setMessage('Yatırım tercihleriniz kaydedildi.');
-      window.location.reload();
+      setResultModal({ type: 'success', weekId: week.id, pairs });
     } catch (e) {
-      setMessage('Yatırım tercihleriniz kaydedilemedi.');
+      setResultModal({ type: 'error', weekId: week?.id, pairs: null, errorMsg: e?.message || 'Kaydetme işlemi başarısız oldu.' });
     } finally {
       setSaving(false);
     }
@@ -180,6 +181,16 @@ const InlineAllocationBox = () => {
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ textAlign: 'center', padding: '8px 0' }}>
+        {canTrade && (
+          <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: '#6b7280' }}>
+            <div style={{ fontWeight: 800, fontSize: 13 }}>
+              {hasActiveAlloc ? 'Aktif yatırımınız var — buradan güncelleyebilirsiniz.' : 'Henüz yatırım yapmadın — buradan yapabilirsin.'}
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.8 }}>
+              <path d="M6 9l6 6 6-6" stroke="#6b7280" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        )}
         <div style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
           <button
             type="button"
@@ -363,6 +374,96 @@ const InlineAllocationBox = () => {
             <div style={{ color: '#6c757d' }}>Tercihleriniz kaydediliyor</div>
           </div>
           <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {resultModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200, padding: 16 }}
+          onClick={() => setResultModal(null)}
+        >
+          <div
+            style={{ background: '#ffffff', borderRadius: 16, boxShadow: '0 16px 40px rgba(0,0,0,.20)', width: '100%', maxWidth: 420, overflow: 'hidden' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid #eef2f7' }}>
+              {resultModal.type === 'success' ? (
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(34,197,94,0.12)', display: 'grid', placeItems: 'center' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <path d="M20 6L9 17l-5-5" stroke="#16a34a" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="ia-check" />
+                  </svg>
+                </div>
+              ) : (
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(239,68,68,0.10)', display: 'grid', placeItems: 'center' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <path d="M7 7l10 10M17 7L7 17" stroke="#dc2626" strokeWidth="2.6" strokeLinecap="round" />
+                  </svg>
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: 15 }}>
+                  {resultModal.type === 'success' ? 'Yatırımınız kaydedildi' : 'Kaydetme başarısız'}
+                </div>
+                <div style={{ color: '#6b7280', fontWeight: 600, fontSize: 12, marginTop: 2 }}>
+                  {resultModal.weekId ? `Hafta: ${resultModal.weekId}` : '—'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResultModal(null)}
+                style={{ background: 'transparent', border: 'none', color: '#6b7280', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}
+                aria-label="Kapat"
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ padding: 16 }}>
+              {resultModal.type === 'success' ? (
+                <>
+                  <div style={{ color: '#111827', fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Seçimler</div>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {Object.entries(resultModal.pairs || {}).sort(([a], [b]) => a.localeCompare(b)).map(([sym, w]) => (
+                      <div key={`sel_${sym}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: 12, border: '1px solid #eef2f7', background: '#fbfdff' }}>
+                        <div style={{ fontWeight: 900 }}>{sym}</div>
+                        <div style={{ color: '#111827', fontWeight: 700 }}>{(Number(w) * 100).toFixed(2)}%</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                    <button type="button" className="btn-chip primary" onClick={() => window.location.reload()}>
+                      Tamam
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ color: '#6b7280', fontWeight: 600, fontSize: 13, marginBottom: 10 }}>
+                    {resultModal.errorMsg || 'Tekrar deneyin. Sorun devam ederse iletişime geçin.'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn-chip ghost" onClick={() => setResultModal(null)}>
+                      Kapat
+                    </button>
+                    <button type="button" className="btn-chip primary" onClick={() => { setResultModal(null); onSave(); }}>
+                      Tekrar Dene
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <style>{`
+              .ia-check {
+                stroke-dasharray: 40;
+                stroke-dashoffset: 40;
+                animation: ia-draw 420ms ease-out forwards;
+              }
+              @keyframes ia-draw {
+                to { stroke-dashoffset: 0; }
+              }
+            `}</style>
+          </div>
         </div>
       )}
       {showHelp && (

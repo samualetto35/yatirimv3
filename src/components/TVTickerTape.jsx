@@ -36,7 +36,7 @@ const TVTickerTape = () => {
   }, []);
 
   return (
-    <div className="info-card no-frame" style={{ overflow: 'hidden', paddingTop: 0, marginBottom: 8 }}>
+    <div className="info-card no-frame tv-ticker-tape" style={{ overflow: 'hidden', paddingTop: 0, marginBottom: 8 }}>
       <div className="tradingview-widget-container" ref={ref} />
     </div>
   );
