@@ -21,6 +21,8 @@ import AdminRoute from './components/AdminRoute';
 import AdminLogs from './pages/AdminLogs';
 import AdminActions from './pages/AdminActions';
 import AdminUsers from './pages/AdminUsers';
+import AdminPerformance from './pages/AdminPerformance';
+import AdminHome from './pages/AdminHome';
 // DB introspection utility intentionally not auto-run to avoid permission issues
 
 function App() {
@@ -112,6 +114,22 @@ function App() {
             element={
               <AdminRoute>
                 <AdminUsers />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/performance"
+            element={
+              <AdminRoute>
+                <AdminPerformance />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <AdminHome />
               </AdminRoute>
             }
           />

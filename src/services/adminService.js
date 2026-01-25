@@ -51,3 +51,9 @@ export const adminGetUserDetails = async (uid) => {
   return res.data;
 };
 
+export const adminGetPerformance = async () => {
+  const fn = httpsCallable(functions, 'adminGetPerformance');
+  const res = await fn();
+  return res.data;
+};
+

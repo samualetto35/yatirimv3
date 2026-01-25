@@ -2,16 +2,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { getLatestSettledWeek, getMarketData } from '../services/portfolioService';
 import { useAuth } from '../context/AuthContext';
 import { getUserAllocationForWeek } from '../services/allocationService';
+import { getInstrumentByCode } from '../config/instruments';
 
 const Row = ({ rank, symbol, pct, isAllocated }) => {
   const positive = Number(pct) >= 0;
+  const instrument = getInstrumentByCode(symbol);
+  const fullName = instrument?.fullName || instrument?.name || symbol;
+  
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderRadius: 10, border: '1px solid #eef2f7', background: isAllocated ? '#f1f3f5' : '#ffffff' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ minWidth: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', border: '1px solid #e5e7eb', fontWeight: 800, fontSize: 12 }}>{rank}</span>
-        <span style={{ fontWeight: 800 }}>{symbol}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+        <span style={{ minWidth: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', border: '1px solid #e5e7eb', fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{rank}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+          <span style={{ fontWeight: 800, fontSize: '0.875rem' }}>{symbol}</span>
+          <span style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fullName}>
+            {fullName}
+          </span>
+        </div>
       </div>
-      <span style={{ fontWeight: 800, color: positive ? '#16a34a' : '#dc2626' }}>{Number(pct).toFixed(2)}%</span>
+      <span style={{ fontWeight: 800, color: positive ? '#16a34a' : '#dc2626', flexShrink: 0 }}>{Number(pct).toFixed(2)}%</span>
     </div>
   );
 };

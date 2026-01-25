@@ -1,8 +1,8 @@
-import { useEffect, useState, Fragment } from 'react';
+import { useEffect, useState, Fragment, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { adminListUsers, adminDeleteUser, adminGetUserDetails } from '../services/adminService';
-import './Dashboard.css';
+import './Admin.css';
 
 const AdminUsers = () => {
   const [users, setUsers] = useState([]);
@@ -13,6 +13,9 @@ const AdminUsers = () => {
   const [expandedUser, setExpandedUser] = useState(null);
   const [userDetails, setUserDetails] = useState({});
   const [loadingDetails, setLoadingDetails] = useState({});
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+  const [filterVerified, setFilterVerified] = useState('all'); // all, verified, unverified
+  const [filterAuth, setFilterAuth] = useState('all'); // all, exists, not-exists
 
   useEffect(() => {
     loadUsers();
@@ -37,7 +40,6 @@ const AdminUsers = () => {
       const result = await adminDeleteUser({ uid, deleteAllocations });
       toast.success(result.message || 'Kullanıcı başarıyla silindi');
       setShowDeleteConfirm(null);
-      // Reload users list
       await loadUsers();
     } catch (error) {
       toast.error(error?.message || 'Kullanıcı silinemedi');
@@ -49,23 +51,19 @@ const AdminUsers = () => {
 
   const loadUserDetails = async (uid, forceRefresh = false) => {
     if (userDetails[uid] && !forceRefresh) {
-      // Already loaded, skip unless force refresh
       return;
     }
 
     setLoadingDetails(prev => ({ ...prev, [uid]: true }));
     try {
-      // Use admin function to get user details (bypasses Firestore rules)
       const details = await adminGetUserDetails(uid);
       
       const balanceData = details.balance || null;
       const wbData = details.weeklyBalances || [];
       const allocData = details.allocations || [];
 
-      // Create a map of weekId -> data
       const weekMap = new Map();
       
-      // Add weekly balances
       wbData.forEach(wb => {
         if (wb.weekId) {
           weekMap.set(wb.weekId, {
@@ -76,7 +74,6 @@ const AdminUsers = () => {
         }
       });
 
-      // Add allocations
       allocData.forEach(alloc => {
         if (alloc.weekId) {
           const existing = weekMap.get(alloc.weekId);
@@ -92,7 +89,6 @@ const AdminUsers = () => {
         }
       });
 
-      // Convert to array and sort by weekId
       const weeks = Array.from(weekMap.values()).sort((a, b) => 
         (b.weekId || '').localeCompare(a.weekId || '')
       );
@@ -106,15 +102,6 @@ const AdminUsers = () => {
           totalAllocations: allocData.length
         }
       }));
-      
-      // Log for debugging
-      console.log(`Loaded details for ${uid}:`, {
-        allocations: allocData.length,
-        weeklyBalances: wbData.length,
-        weeks: weeks.length,
-        allocationWeekIds: allocData.map(a => a.weekId),
-        wbWeekIds: wbData.map(w => w.weekId)
-      });
     } catch (error) {
       console.error('Failed to load user details:', error);
       toast.error('Kullanıcı detayları yüklenemedi');
@@ -132,47 +119,85 @@ const AdminUsers = () => {
     }
   };
 
-  const filteredUsers = users.filter(user => {
-    if (!search) return true;
-    const searchLower = search.toLowerCase();
-    return (
-      user.username?.toLowerCase().includes(searchLower) ||
-      user.email?.toLowerCase().includes(searchLower) ||
-      user.uid?.toLowerCase().includes(searchLower)
-    );
-  });
+  const handleSort = (key) => {
+    setSortConfig(prev => {
+      if (prev.key === key) {
+        return {
+          key,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc'
+        };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const filteredAndSortedUsers = useMemo(() => {
+    let filtered = users.filter(user => {
+      // Search filter
+      if (search) {
+        const searchLower = search.toLowerCase();
+        if (!(
+          user.username?.toLowerCase().includes(searchLower) ||
+          user.email?.toLowerCase().includes(searchLower) ||
+          user.uid?.toLowerCase().includes(searchLower)
+        )) {
+          return false;
+        }
+      }
+
+      // Verified filter
+      if (filterVerified === 'verified' && !user.emailVerified) return false;
+      if (filterVerified === 'unverified' && user.emailVerified) return false;
+
+      // Auth filter
+      if (filterAuth === 'exists' && !user.authExists) return false;
+      if (filterAuth === 'not-exists' && user.authExists) return false;
+
+      return true;
+    });
+
+    // Sort
+    if (sortConfig.key) {
+      filtered = [...filtered].sort((a, b) => {
+        let aVal = a[sortConfig.key];
+        let bVal = b[sortConfig.key];
+
+        if (sortConfig.key === 'createdAt') {
+          aVal = aVal ? new Date(aVal).getTime() : 0;
+          bVal = bVal ? new Date(bVal).getTime() : 0;
+        } else if (typeof aVal === 'string') {
+          aVal = aVal.toLowerCase();
+          bVal = bVal.toLowerCase();
+        }
+
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [users, search, filterVerified, filterAuth, sortConfig]);
 
   const formatDate = (timestamp) => {
     if (!timestamp) return 'N/A';
     try {
       let date;
-      
-      // If it's already an ISO string from functions
       if (typeof timestamp === 'string') {
         date = new Date(timestamp);
-      }
-      // Check if it's a Firestore Timestamp with toDate method
-      else if (timestamp && typeof timestamp.toDate === 'function') {
+      } else if (timestamp && typeof timestamp.toDate === 'function') {
         date = timestamp.toDate();
-      }
-      // Check if it's a serialized Firestore Timestamp with seconds property
-      else if (timestamp && (timestamp.seconds || timestamp._seconds)) {
+      } else if (timestamp && (timestamp.seconds || timestamp._seconds)) {
         const seconds = timestamp.seconds || timestamp._seconds;
         date = new Date(seconds * 1000);
-      }
-      // Check if it's already a Date object
-      else if (timestamp instanceof Date) {
+      } else if (timestamp instanceof Date) {
         date = timestamp;
-      }
-      // Try to parse as number (milliseconds)
-      else if (typeof timestamp === 'number') {
+      } else if (typeof timestamp === 'number') {
         date = new Date(timestamp);
-      }
-      else {
+      } else {
         return 'N/A';
       }
       
-      // Validate the date
       if (!date || isNaN(date.getTime())) {
         return 'N/A';
       }
@@ -191,7 +216,6 @@ const AdminUsers = () => {
     }
   };
 
-  // User Details Component
   const UserDetailsView = ({ user, details, onRefresh }) => {
     const formatMoney = (n) => {
       const num = Number(n);
@@ -212,65 +236,56 @@ const AdminUsers = () => {
     };
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Balance Summary */}
-        <div style={{ background: 'white', borderRadius: '12px', padding: '1rem', border: '1px solid #e9ecef' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h4 style={{ margin: '0', color: '#212529' }}>Bakiye Özeti</h4>
-            <button
-              className="btn btn-secondary"
-              onClick={() => loadUserDetails(user.uid, true)}
-              style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem' }}
-              title="Detayları yenile"
-            >
-              🔄 Yenile
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="admin-card" style={{ padding: '1rem', marginBottom: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>Bakiye Özeti</h4>
+            <button className="admin-btn admin-btn-secondary admin-btn-sm" onClick={onRefresh}>
+              🔄
             </button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: '#6c757d', marginBottom: '0.25rem' }}>Güncel Bakiye</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: '700', color: '#212529' }}>
-                {formatMoney(details.balance?.latestBalance)}
-              </div>
+          <div className="admin-stats-compact">
+            <div className="admin-stat-compact">
+              <div className="admin-stat-compact-label">Güncel Bakiye</div>
+              <div className="admin-stat-compact-value">{formatMoney(details.balance?.latestBalance)}</div>
             </div>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: '#6c757d', marginBottom: '0.25rem' }}>Son Hafta</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600', color: '#495057' }}>
+            <div className="admin-stat-compact">
+              <div className="admin-stat-compact-label">Son Hafta</div>
+              <div className="admin-stat-compact-value" style={{ fontSize: '0.875rem' }}>
                 {details.balance?.latestWeekId || 'N/A'}
               </div>
             </div>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: '#6c757d', marginBottom: '0.25rem' }}>Toplam Hafta</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600', color: '#495057' }}>
-                {details.totalWeeks} hafta
+            <div className="admin-stat-compact">
+              <div className="admin-stat-compact-label">Toplam Hafta</div>
+              <div className="admin-stat-compact-value" style={{ fontSize: '0.875rem' }}>
+                {details.totalWeeks}
               </div>
             </div>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: '#6c757d', marginBottom: '0.25rem' }}>Toplam Allocation</div>
-              <div style={{ fontSize: '1rem', fontWeight: '600', color: '#495057' }}>
-                {details.totalAllocations} adet
+            <div className="admin-stat-compact">
+              <div className="admin-stat-compact-label">Allocations</div>
+              <div className="admin-stat-compact-value" style={{ fontSize: '0.875rem' }}>
+                {details.totalAllocations}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Weekly Details */}
-        <div style={{ background: 'white', borderRadius: '12px', padding: '1rem', border: '1px solid #e9ecef' }}>
-          <h4 style={{ margin: '0 0 1rem 0', color: '#212529' }}>Haftalık Detaylar ({details.weeks.length} hafta)</h4>
-          <div style={{ maxHeight: '500px', overflow: 'auto' }}>
+        <div className="admin-card" style={{ padding: '1rem', marginBottom: 0 }}>
+          <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
+            Haftalık Detaylar ({details.weeks.length})
+          </h4>
+          <div className="admin-table-wrapper admin-scrollable" style={{ maxHeight: '400px' }}>
             {details.weeks.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '2rem', color: '#6c757d' }}>
-                Henüz haftalık veri yok
-              </div>
+              <div className="admin-empty" style={{ padding: '1.5rem' }}>Henüz haftalık veri yok</div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+              <table className="admin-table admin-table-compact">
                 <thead>
-                  <tr style={{ borderBottom: '2px solid #e9ecef', background: '#f8f9fa' }}>
-                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Hafta</th>
-                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Başlangıç</th>
-                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Bitiş</th>
-                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Getiri</th>
-                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Allocations</th>
+                  <tr>
+                    <th>Hafta</th>
+                    <th style={{ textAlign: 'right' }}>Başlangıç</th>
+                    <th style={{ textAlign: 'right' }}>Bitiş</th>
+                    <th style={{ textAlign: 'right' }}>Getiri</th>
+                    <th>Allocations</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -281,23 +296,22 @@ const AdminUsers = () => {
                     const isPositive = returnPct != null && Number(returnPct) >= 0;
                     
                     return (
-                      <tr key={week.weekId} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>{week.weekId}</td>
-                        <td style={{ padding: '0.75rem', textAlign: 'right', color: '#495057' }}>
+                      <tr key={week.weekId}>
+                        <td style={{ fontWeight: '600' }}>{week.weekId}</td>
+                        <td style={{ textAlign: 'right' }}>
                           {formatMoney(wb?.baseBalance || alloc?.baseBalance)}
                         </td>
-                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#212529' }}>
+                        <td style={{ textAlign: 'right', fontWeight: '600' }}>
                           {formatMoney(wb?.endBalance)}
                         </td>
                         <td style={{ 
-                          padding: '0.75rem', 
                           textAlign: 'right', 
                           fontWeight: '600',
-                          color: returnPct != null ? (isPositive ? '#28a745' : '#dc3545') : '#6c757d'
+                          color: returnPct != null ? (isPositive ? '#10b981' : '#ef4444') : '#6b7280'
                         }}>
                           {formatPct(returnPct)}
                         </td>
-                        <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#495057' }}>
+                        <td style={{ fontSize: '0.75rem' }}>
                           {getAllocString(alloc)}
                         </td>
                       </tr>
@@ -313,145 +327,193 @@ const AdminUsers = () => {
   };
 
   return (
-    <div className="dashboard-container">
-      <div className="dashboard-header">
-        <h1>Kullanıcı Yönetimi</h1>
-        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
-          <Link to="/admin/actions" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
-            Actions
-          </Link>
-          <Link to="/admin/logs" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
-            Logs
-          </Link>
+    <div className="admin-container">
+      <div className="admin-header">
+        <div className="admin-header-content">
+          <h1>Kullanıcı Yönetimi</h1>
+          <div className="admin-nav">
+            <Link to="/admin" className="admin-nav-link">Ana Sayfa</Link>
+            <Link to="/admin/performance" className="admin-nav-link">Performans</Link>
+            <Link to="/admin/actions" className="admin-nav-link">Actions</Link>
+            <Link to="/admin/logs" className="admin-nav-link">Logs</Link>
+          </div>
         </div>
       </div>
-      <div className="dashboard-content">
-        <div className="info-card" style={{ marginBottom: '1rem' }}>
-          <h3>Filtreler</h3>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+
+      <div className="admin-content">
+        <div className="admin-card">
+          <div className="admin-card-header">
+            <h3 className="admin-card-title">Filtreler ve Arama</h3>
+          </div>
+          <div className="admin-search">
             <input
               type="text"
+              className="admin-search-input"
               placeholder="Kullanıcı adı, email veya UID ile ara..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ flex: 1, padding: '0.5rem', borderRadius: '8px', border: '1px solid #ced4da' }}
             />
-            <button className="btn btn-secondary" onClick={loadUsers} disabled={loading}>
+            <button 
+              className="admin-btn admin-btn-secondary" 
+              onClick={loadUsers} 
+              disabled={loading}
+            >
               {loading ? 'Yükleniyor...' : 'Yenile'}
             </button>
           </div>
-          <div style={{ marginTop: '0.5rem', color: '#6c757d', fontSize: '0.9rem' }}>
-            Toplam: {users.length} kullanıcı | Filtrelenmiş: {filteredUsers.length}
+          <div className="admin-filter-pills">
+            <button
+              className={`admin-filter-pill ${filterVerified === 'all' ? 'active' : ''}`}
+              onClick={() => setFilterVerified('all')}
+            >
+              Tümü
+            </button>
+            <button
+              className={`admin-filter-pill ${filterVerified === 'verified' ? 'active' : ''}`}
+              onClick={() => setFilterVerified('verified')}
+            >
+              Doğrulanmış
+            </button>
+            <button
+              className={`admin-filter-pill ${filterVerified === 'unverified' ? 'active' : ''}`}
+              onClick={() => setFilterVerified('unverified')}
+            >
+              Doğrulanmamış
+            </button>
+            <button
+              className={`admin-filter-pill ${filterAuth === 'all' ? 'active' : ''}`}
+              onClick={() => setFilterAuth('all')}
+            >
+              Auth: Tümü
+            </button>
+            <button
+              className={`admin-filter-pill ${filterAuth === 'exists' ? 'active' : ''}`}
+              onClick={() => setFilterAuth('exists')}
+            >
+              Auth: Var
+            </button>
+            <button
+              className={`admin-filter-pill ${filterAuth === 'not-exists' ? 'active' : ''}`}
+              onClick={() => setFilterAuth('not-exists')}
+            >
+              Auth: Yok
+            </button>
+          </div>
+          <div style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+            Toplam: <strong>{users.length}</strong> kullanıcı | Filtrelenmiş: <strong>{filteredAndSortedUsers.length}</strong>
           </div>
         </div>
 
         {loading ? (
-          <div className="info-card">
-            <div style={{ textAlign: 'center', padding: '2rem' }}>Yükleniyor...</div>
+          <div className="admin-card">
+            <div className="admin-loading">Yükleniyor...</div>
           </div>
         ) : (
-          <div className="info-card">
-            <h3>Kullanıcılar ({filteredUsers.length})</h3>
-            <div style={{ maxHeight: '600px', overflow: 'auto' }}>
-              {filteredUsers.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#6c757d' }}>
-                  Kullanıcı bulunamadı
-                </div>
+          <div className="admin-card">
+            <div className="admin-card-header">
+              <h3 className="admin-card-title">Kullanıcılar ({filteredAndSortedUsers.length})</h3>
+            </div>
+            <div className="admin-table-wrapper">
+              {filteredAndSortedUsers.length === 0 ? (
+                <div className="admin-empty">Kullanıcı bulunamadı</div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table className="admin-table admin-table-compact">
                   <thead>
-                    <tr style={{ borderBottom: '2px solid #e9ecef', background: '#f8f9fa' }}>
-                      <th style={{ padding: '0.75rem', textAlign: 'left', width: '30px' }}></th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Kullanıcı Adı</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Email</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Doğrulandı</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Auth Durumu</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Oluşturulma</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>İşlemler</th>
+                    <tr>
+                      <th style={{ width: '30px' }}></th>
+                      <th 
+                        className={`admin-sortable ${sortConfig.key === 'username' ? sortConfig.direction : ''}`}
+                        onClick={() => handleSort('username')}
+                      >
+                        Kullanıcı Adı
+                      </th>
+                      <th 
+                        className={`admin-sortable ${sortConfig.key === 'email' ? sortConfig.direction : ''}`}
+                        onClick={() => handleSort('email')}
+                      >
+                        Email
+                      </th>
+                      <th>Doğrulandı</th>
+                      <th>Auth</th>
+                      <th 
+                        className={`admin-sortable ${sortConfig.key === 'createdAt' ? sortConfig.direction : ''}`}
+                        onClick={() => handleSort('createdAt')}
+                      >
+                        Oluşturulma
+                      </th>
+                      <th style={{ textAlign: 'center' }}>İşlemler</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredUsers.map((user) => {
+                    {filteredAndSortedUsers.map((user) => {
                       const isExpanded = expandedUser === user.uid;
                       const details = userDetails[user.uid];
                       const loadingDetail = loadingDetails[user.uid];
                       
                       return (
                         <Fragment key={user.uid}>
-                          <tr style={{ borderBottom: '1px solid #e9ecef', background: isExpanded ? '#f8f9fa' : 'transparent' }}>
-                            <td style={{ padding: '0.5rem', textAlign: 'center' }}>
+                          <tr className={isExpanded ? 'admin-expandable-row' : ''}>
+                            <td style={{ textAlign: 'center' }}>
                               <button
                                 onClick={() => handleToggleDetails(user.uid)}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                  fontSize: '1.2rem',
-                                  color: '#495057',
-                                  padding: '0.25rem 0.5rem'
-                                }}
+                                className="admin-toggle-btn"
                                 title={isExpanded ? 'Detayları gizle' : 'Detayları göster'}
                               >
                                 {isExpanded ? '▼' : '▶'}
                               </button>
                             </td>
-                            <td style={{ padding: '0.75rem', fontWeight: '500' }}>{user.username}</td>
-                            <td style={{ padding: '0.75rem' }}>{user.email}</td>
-                            <td style={{ padding: '0.75rem' }}>
-                              <span style={{ color: user.emailVerified ? '#28a745' : '#dc3545' }}>
+                            <td style={{ fontWeight: '500' }}>{user.username}</td>
+                            <td style={{ fontSize: '0.8125rem' }}>{user.email}</td>
+                            <td>
+                              <span className={`admin-badge ${user.emailVerified ? 'admin-badge-success' : 'admin-badge-danger'}`}>
                                 {user.emailVerified ? '✓' : '✗'}
                               </span>
                             </td>
-                            <td style={{ padding: '0.75rem' }}>
-                              <span style={{ color: user.authExists ? '#28a745' : '#dc3545' }}>
+                            <td>
+                              <span className={`admin-badge ${user.authExists ? 'admin-badge-success' : 'admin-badge-danger'}`}>
                                 {user.authExists ? 'Var' : 'Yok'}
                               </span>
                             </td>
-                            <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#6c757d' }}>
+                            <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                               {formatDate(user.createdAt)}
                             </td>
-                            <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
+                            <td style={{ textAlign: 'center' }}>
+                              <div className="admin-actions-group">
                                 <button
-                                  className="btn btn-secondary"
+                                  className="admin-btn admin-btn-secondary admin-btn-sm"
                                   onClick={() => handleToggleDetails(user.uid)}
-                                  style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem' }}
                                 >
-                                  {isExpanded ? 'Gizle' : 'Detaylar'}
+                                  {isExpanded ? 'Gizle' : 'Detay'}
                                 </button>
                                 {showDeleteConfirm === user.uid ? (
                                   <>
                                     <button
-                                      className="btn btn-primary"
+                                      className="admin-btn admin-btn-primary admin-btn-sm"
                                       onClick={() => handleDelete(user.uid, user.username, false)}
                                       disabled={deleting === user.uid}
-                                      style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem' }}
                                     >
-                                      {deleting === user.uid ? 'Siliniyor...' : 'Sadece Kullanıcı'}
+                                      {deleting === user.uid ? '...' : 'Sadece'}
                                     </button>
                                     <button
-                                      className="btn btn-primary"
+                                      className="admin-btn admin-btn-danger admin-btn-sm"
                                       onClick={() => handleDelete(user.uid, user.username, true)}
                                       disabled={deleting === user.uid}
-                                      style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem', background: '#dc3545' }}
                                     >
-                                      {deleting === user.uid ? 'Siliniyor...' : 'Hepsi'}
+                                      {deleting === user.uid ? '...' : 'Hepsi'}
                                     </button>
                                     <button
-                                      className="btn btn-secondary"
+                                      className="admin-btn admin-btn-secondary admin-btn-sm"
                                       onClick={() => setShowDeleteConfirm(null)}
                                       disabled={deleting === user.uid}
-                                      style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem' }}
                                     >
                                       İptal
                                     </button>
                                   </>
                                 ) : (
                                   <button
-                                    className="btn btn-primary"
+                                    className="admin-btn admin-btn-danger admin-btn-sm"
                                     onClick={() => setShowDeleteConfirm(user.uid)}
                                     disabled={deleting === user.uid}
-                                    style={{ fontSize: '0.85rem', padding: '0.25rem 0.5rem', background: '#dc3545' }}
                                   >
                                     Sil
                                   </button>
@@ -460,17 +522,15 @@ const AdminUsers = () => {
                             </td>
                           </tr>
                           {isExpanded && (
-                            <tr key={`${user.uid}-details`}>
-                              <td colSpan={7} style={{ padding: '0', background: '#f8f9fa' }}>
-                                <div style={{ padding: '1.5rem', borderTop: '2px solid #dee2e6' }}>
+                            <tr>
+                              <td colSpan={7} style={{ padding: 0 }}>
+                                <div className="admin-expandable-content" style={{ padding: '1rem' }}>
                                   {loadingDetail ? (
-                                    <div style={{ textAlign: 'center', padding: '2rem' }}>Yükleniyor...</div>
+                                    <div className="admin-loading" style={{ padding: '1.5rem' }}>Yükleniyor...</div>
                                   ) : details ? (
                                     <UserDetailsView user={user} details={details} onRefresh={() => loadUserDetails(user.uid, true)} />
                                   ) : (
-                                    <div style={{ textAlign: 'center', padding: '2rem', color: '#6c757d' }}>
-                                      Detaylar yüklenemedi
-                                    </div>
+                                    <div className="admin-empty" style={{ padding: '1.5rem' }}>Detaylar yüklenemedi</div>
                                   )}
                                 </div>
                               </td>

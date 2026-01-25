@@ -5,6 +5,7 @@ import TVSymbolOverview from '../components/TVSymbolOverview';
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { getUserAllocations } from '../services/allocationService';
+import { getInstrumentByCode } from '../config/instruments';
 
 const Market = () => {
   const { currentUser } = useAuth();
@@ -112,7 +113,7 @@ const Market = () => {
                   <div style={{ borderTop: '1px solid #f1f3f5', padding: '10px 12px' }}>
                     {pairs.length ? (
                       <div style={{ display: 'grid', gap: 8 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr', gap: 8 }}>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Pair</div>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Open</div>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Close</div>
@@ -120,12 +121,14 @@ const Market = () => {
                         </div>
                         {pairs.map(sym => {
                           const allocated = !!allocSyms && allocSyms.has(sym);
+                          const instrument = getInstrumentByCode(sym);
+                          const fullName = instrument?.fullName || instrument?.name || sym;
                           return (
                             <div
                               key={`${row.id}_${sym}_row`}
                               style={{
                                 display: 'grid',
-                                gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                                gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr',
                                 gap: 8,
                                 padding: '8px 10px',
                                 borderRadius: 10,
@@ -133,7 +136,12 @@ const Market = () => {
                                 alignItems: 'center',
                               }}
                             >
-                              <div style={{ fontWeight: 800 }}>{sym}</div>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 800, fontSize: '0.875rem' }}>{sym}</div>
+                                <div style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fullName}>
+                                  {fullName}
+                                </div>
+                              </div>
                               <div>${m[sym]?.open != null ? Number(m[sym].open).toFixed(2) : '—'}</div>
                               <div>${m[sym]?.close != null ? Number(m[sym].close).toFixed(2) : '—'}</div>
                               <div style={{ color: Number(m[sym]?.returnPct || 0) >= 0 ? '#16a34a' : '#dc2626', fontWeight: 800 }}>

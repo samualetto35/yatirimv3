@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getLatestSettledWeek, getMarketData } from '../services/portfolioService';
+import { getInstrumentByCode } from '../config/instruments';
 
 const Badge = ({ children, color = 'gray' }) => (
   <span style={{
@@ -48,7 +49,7 @@ const MarketOverview = () => {
       ) : (
         <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <div style={{ minWidth: 420 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, background: '#f8fafc', border: '1px solid #eef2f7', color: '#6b7280', fontWeight: 800, fontSize: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, background: '#f8fafc', border: '1px solid #eef2f7', color: '#6b7280', fontWeight: 800, fontSize: 12 }}>
               <div>Pair</div>
               <div>Open</div>
               <div>Close</div>
@@ -60,9 +61,16 @@ const MarketOverview = () => {
                 const open = data?.open != null ? Number(data.open) : null;
                 const close = data?.close != null ? Number(data.close) : null;
                 const col = pct > 0 ? 'green' : (pct < 0 ? 'red' : 'gray');
+                const instrument = getInstrumentByCode(symbol);
+                const fullName = instrument?.fullName || instrument?.name || symbol;
                 return (
-                  <div key={symbol} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, border: '1px solid #eef2f7', background: '#ffffff', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 900 }}>{symbol}</div>
+                  <div key={symbol} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, border: '1px solid #eef2f7', background: '#ffffff', alignItems: 'center' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 900, fontSize: '0.875rem' }}>{symbol}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fullName}>
+                        {fullName}
+                      </div>
+                    </div>
                     <div style={{ color: '#111827', fontWeight: 500 }}>{open != null ? `$${open.toFixed(2)}` : '—'}</div>
                     <div style={{ color: '#111827', fontWeight: 500 }}>{close != null ? `$${close.toFixed(2)}` : '—'}</div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

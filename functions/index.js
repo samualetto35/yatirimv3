@@ -2779,3 +2779,305 @@ exports.adminGetUserDetails = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', error.message);
   }
 });
+
+/**
+ * Admin: Get performance analytics and KPIs
+ */
+exports.adminGetPerformance = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '1GB'
+  })
+  .https.onCall(async (data, context) => {
+  console.log('[adminGetPerformance] ===== FUNCTION CALLED =====');
+  console.log('[adminGetPerformance] Timestamp:', new Date().toISOString());
+  
+  if (!context) {
+    console.error('[adminGetPerformance] ERROR: Context is null/undefined');
+    throw new functions.https.HttpsError('unauthenticated', 'Context is missing');
+  }
+  
+  console.log('[adminGetPerformance] Context.auth exists:', !!context?.auth);
+  console.log('[adminGetPerformance] Context.auth.uid:', context?.auth?.uid);
+  console.log('[adminGetPerformance] Context.auth.token.email:', context?.auth?.token?.email);
+  
+  try {
+    console.log('[adminGetPerformance] Calling assertAdmin...');
+    assertAdmin(context);
+    console.log('[adminGetPerformance] Admin check PASSED');
+  } catch (e) {
+    console.error('[adminGetPerformance] Admin check FAILED:', e.message);
+    console.error('[adminGetPerformance] Error stack:', e.stack);
+    console.error('[adminGetPerformance] Error name:', e.name);
+    throw e;
+  }
+  
+  try {
+    console.log('[adminGetPerformance] Starting data fetch...');
+    
+    console.log('[adminGetPerformance] Fetching users...');
+    const usersSnap = await db.collection('users').get();
+    const users = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
+    console.log(`[adminGetPerformance] Found ${users.length} users`);
+    
+    console.log('[adminGetPerformance] Fetching allocations...');
+    const allocationsSnap = await db.collection('allocations').get();
+    const allocations = allocationsSnap.docs.map(d => d.data());
+    console.log(`[adminGetPerformance] Found ${allocations.length} allocations`);
+    
+    console.log('[adminGetPerformance] Fetching weekly balances...');
+    const weeklyBalancesSnap = await db.collection('weeklyBalances').get();
+    const weeklyBalances = weeklyBalancesSnap.docs.map(d => d.data());
+    console.log(`[adminGetPerformance] Found ${weeklyBalances.length} weekly balances`);
+    
+    console.log('[adminGetPerformance] Fetching balances...');
+    const balancesSnap = await db.collection('balances').get();
+    const balances = balancesSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
+    console.log(`[adminGetPerformance] Found ${balances.length} balances`);
+    
+    // Get recent weeks (last 4)
+    console.log('[adminGetPerformance] Fetching recent weeks...');
+    let recentWeeks = [];
+    try {
+      const weeksSnap = await db.collection('weeks')
+        .where('status', '==', 'settled')
+        .orderBy('endDate', 'desc')
+        .limit(4)
+        .get();
+      recentWeeks = weeksSnap.docs.map(d => d.data());
+      console.log(`[adminGetPerformance] Found ${recentWeeks.length} recent weeks (with orderBy)`);
+    } catch (e) {
+      console.warn('[adminGetPerformance] Weeks query with orderBy failed, using fallback:', e.message);
+      const weeksSnap = await db.collection('weeks')
+        .where('status', '==', 'settled')
+        .get();
+      recentWeeks = weeksSnap.docs
+        .map(d => d.data())
+        .filter(w => w.endDate)
+        .sort((a, b) => {
+          const aDate = a.endDate?.toDate ? a.endDate.toDate() : new Date(a.endDate);
+          const bDate = b.endDate?.toDate ? b.endDate.toDate() : new Date(b.endDate);
+          return bDate - aDate;
+        })
+        .slice(0, 4);
+      console.log(`[adminGetPerformance] Found ${recentWeeks.length} recent weeks (fallback)`);
+    }
+    recentWeeks.sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+    const recentWeekIds = recentWeeks.map(w => w.id);
+    console.log(`[adminGetPerformance] Recent week IDs:`, recentWeekIds);
+    
+    console.log('[adminGetPerformance] Calculating KPIs...');
+    // Calculate KPIs
+    const kpis = {
+      totalUsers: users.length,
+      totalAllocations: allocations.length,
+      totalWeeks: recentWeeks.length,
+      activeUsers: new Set(allocations.map(a => a.uid)).size,
+    };
+    console.log('[adminGetPerformance] KPIs calculated:', kpis);
+    
+    console.log('[adminGetPerformance] Calculating most popular pairs...');
+    // Most popular pairs (all time)
+    const pairCounts = {};
+    allocations.forEach(alloc => {
+      if (alloc.pairs) {
+        Object.keys(alloc.pairs).forEach(pair => {
+          const weight = Number(alloc.pairs[pair]) || 0;
+          if (weight > 0) {
+            pairCounts[pair] = (pairCounts[pair] || 0) + weight;
+          }
+        });
+      }
+    });
+    console.log(`[adminGetPerformance] Found ${Object.keys(pairCounts).length} unique pairs`);
+    const mostPopularPairs = Object.entries(pairCounts)
+      .map(([pair, totalWeight]) => ({
+        pair,
+        totalWeight,
+        allocationCount: allocations.filter(a => a.pairs?.[pair] && Number(a.pairs[pair]) > 0).length,
+        avgWeight: totalWeight / Math.max(1, allocations.filter(a => a.pairs?.[pair] && Number(a.pairs[pair]) > 0).length)
+      }))
+      .sort((a, b) => b.totalWeight - a.totalWeight)
+      .slice(0, 20);
+    
+    // Most popular pairs by week
+    const pairsByWeek = {};
+    allocations.forEach(alloc => {
+      if (alloc.weekId && alloc.pairs) {
+        if (!pairsByWeek[alloc.weekId]) pairsByWeek[alloc.weekId] = {};
+        Object.keys(alloc.pairs).forEach(pair => {
+          const weight = Number(alloc.pairs[pair]) || 0;
+          if (weight > 0) {
+            if (!pairsByWeek[alloc.weekId][pair]) {
+              pairsByWeek[alloc.weekId][pair] = { totalWeight: 0, count: 0 };
+            }
+            pairsByWeek[alloc.weekId][pair].totalWeight += weight;
+            pairsByWeek[alloc.weekId][pair].count += 1;
+          }
+        });
+      }
+    });
+    
+    // Average returns for recent weeks
+    const avgReturnsByWeek = recentWeekIds.map(weekId => {
+      const weekWbs = weeklyBalances.filter(wb => wb.weekId === weekId);
+      if (weekWbs.length === 0) return { weekId, avgReturn: 0, userCount: 0 };
+      const totalReturn = weekWbs.reduce((sum, wb) => sum + (Number(wb.resultReturnPct) || 0), 0);
+      return {
+        weekId,
+        avgReturn: totalReturn / weekWbs.length,
+        userCount: weekWbs.length
+      };
+    });
+    
+    // Top 10% users by balance
+    const sortedByBalance = balances
+      .filter(b => b.latestBalance != null)
+      .sort((a, b) => Number(b.latestBalance) - Number(a.latestBalance));
+    const top10PercentCount = Math.max(1, Math.floor(sortedByBalance.length * 0.1));
+    const top10Percent = sortedByBalance.slice(0, top10PercentCount);
+    
+    // Users by allocation count
+    const allocationCountByUser = {};
+    allocations.forEach(alloc => {
+      allocationCountByUser[alloc.uid] = (allocationCountByUser[alloc.uid] || 0) + 1;
+    });
+    const usersByAllocationCount = Object.entries(allocationCountByUser)
+      .map(([uid, count]) => {
+        const user = users.find(u => u.uid === uid);
+        const balance = balances.find(b => b.uid === uid);
+        return {
+          uid,
+          username: user?.username || uid,
+          email: user?.email || 'N/A',
+          allocationCount: count,
+          balance: balance?.latestBalance || 0
+        };
+      })
+      .sort((a, b) => b.allocationCount - a.allocationCount);
+    
+    // Win rate by user
+    const winRateByUser = {};
+    weeklyBalances.forEach(wb => {
+      if (!winRateByUser[wb.uid]) {
+        winRateByUser[wb.uid] = { wins: 0, total: 0 };
+      }
+      winRateByUser[wb.uid].total += 1;
+      if (Number(wb.resultReturnPct) > 0) {
+        winRateByUser[wb.uid].wins += 1;
+      }
+    });
+    const usersByWinRate = Object.entries(winRateByUser)
+      .map(([uid, stats]) => {
+        const user = users.find(u => u.uid === uid);
+        const balance = balances.find(b => b.uid === uid);
+        return {
+          uid,
+          username: user?.username || uid,
+          email: user?.email || 'N/A',
+          winRate: stats.total > 0 ? (stats.wins / stats.total) * 100 : 0,
+          wins: stats.wins,
+          total: stats.total,
+          balance: balance?.latestBalance || 0
+        };
+      })
+      .filter(u => u.total >= 3)
+      .sort((a, b) => b.winRate - a.winRate);
+    
+    // Users by specific pair preference
+    const pairPreferenceByUser = {};
+    allocations.forEach(alloc => {
+      if (alloc.pairs) {
+        Object.keys(alloc.pairs).forEach(pair => {
+          const weight = Number(alloc.pairs[pair]) || 0;
+          if (weight > 0) {
+            if (!pairPreferenceByUser[pair]) {
+              pairPreferenceByUser[pair] = [];
+            }
+            const existing = pairPreferenceByUser[pair].find(u => u.uid === alloc.uid);
+            if (existing) {
+              existing.count += 1;
+              existing.totalWeight += weight;
+            } else {
+              const user = users.find(u => u.uid === alloc.uid);
+              pairPreferenceByUser[pair].push({
+                uid: alloc.uid,
+                username: user?.username || alloc.uid,
+                email: user?.email || 'N/A',
+                count: 1,
+                totalWeight: weight
+              });
+            }
+          }
+        });
+      }
+    });
+    
+    const pairPreferenceLists = {};
+    Object.keys(pairPreferenceByUser).forEach(pair => {
+      pairPreferenceLists[pair] = pairPreferenceByUser[pair]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20);
+    });
+    
+    console.log('[adminGetPerformance] Preparing return data...');
+    await logEvent({
+      category: 'admin',
+      action: 'getPerformance',
+      message: 'Admin viewed performance analytics',
+      user: { email: context.auth?.token?.email || 'unknown' },
+      data: { kpis }
+    });
+    
+    console.log('[adminGetPerformance] Returning data...');
+    const result = {
+      kpis,
+      mostPopularPairs,
+      pairsByWeek,
+      avgReturnsByWeek,
+      top10Percent: top10Percent.map(b => {
+        const user = users.find(u => u.uid === b.uid);
+        return {
+          uid: b.uid,
+          username: user?.username || b.uid,
+          email: user?.email || 'N/A',
+          balance: b.latestBalance
+        };
+      }),
+      usersByAllocationCount,
+      usersByWinRate,
+      pairPreferenceLists
+    };
+    console.log('[adminGetPerformance] Data prepared successfully');
+    console.log('[adminGetPerformance] Result summary:', {
+      kpisCount: Object.keys(result.kpis).length,
+      mostPopularPairsCount: result.mostPopularPairs.length,
+      pairsByWeekCount: Object.keys(result.pairsByWeek).length,
+      avgReturnsByWeekCount: result.avgReturnsByWeek.length,
+      top10PercentCount: result.top10Percent.length,
+      usersByAllocationCount: result.usersByAllocationCount.length,
+      usersByWinRateCount: result.usersByWinRate.length,
+      pairPreferenceListsCount: Object.keys(result.pairPreferenceLists).length
+    });
+    return result;
+  } catch (error) {
+    console.error('[adminGetPerformance] ERROR:', error);
+    console.error('[adminGetPerformance] Error stack:', error.stack);
+    console.error('[adminGetPerformance] Error message:', error.message);
+    console.error('[adminGetPerformance] Error name:', error.name);
+    try {
+      await logEvent({
+        category: 'admin',
+        action: 'getPerformance',
+        message: `Failed to get performance data: ${error.message}`,
+        user: { email: context.auth?.token?.email || 'unknown' },
+        severity: 'error',
+        outcome: 'failure',
+        data: { error: error.message, stack: error.stack, name: error.name }
+      });
+    } catch (logError) {
+      console.error('[adminGetPerformance] Failed to log error:', logError);
+    }
+    throw new functions.https.HttpsError('internal', `Performance data fetch failed: ${error.message}`);
+  }
+});
