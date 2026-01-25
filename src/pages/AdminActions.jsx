@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import './Dashboard.css';
 import { toast } from 'react-toastify';
 import {
@@ -34,6 +35,14 @@ const AdminActions = () => {
     <div className="dashboard-container">
       <div className="dashboard-header">
         <h1>Admin Actions</h1>
+        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
+          <Link to="/admin/logs" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
+            Logs
+          </Link>
+          <Link to="/admin/users" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
+            Kullanıcı Yönetimi
+          </Link>
+        </div>
       </div>
       <div className="dashboard-content">
         <div className="info-card" style={{ marginBottom: '1rem' }}>

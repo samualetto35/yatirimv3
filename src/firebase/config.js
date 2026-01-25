@@ -27,24 +27,23 @@ const db = getFirestore(app);
 try {
   if (typeof window !== 'undefined') {
     const siteKey = import.meta?.env?.VITE_RECAPTCHA_V3_SITE_KEY;
+    const isDevelopment = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || import.meta?.env?.DEV;
     
-    if (siteKey && siteKey.length > 10) {
+    // Only enable App Check in production
+    if (!isDevelopment && siteKey && siteKey.length > 10) {
       // Production: use real reCAPTCHA
       initializeAppCheck(app, {
         provider: new ReCaptchaV3Provider(siteKey),
         isTokenAutoRefreshEnabled: true,
       });
-    } else if (location.hostname === 'localhost' || import.meta?.env?.DEV) {
-      // Development: Enable debug token mode
-      self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-      initializeAppCheck(app, {
-        provider: new ReCaptchaV3Provider('6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI'),
-        isTokenAutoRefreshEnabled: true,
-      });
+    } else if (isDevelopment) {
+      // Development: Skip App Check to avoid debug token issues
+      console.log('App Check disabled in development mode');
     }
   }
 } catch (err) {
   // App Check init is best-effort; ignore errors
+  console.warn('App Check initialization failed:', err);
 }
 
 export { app, analytics, auth, db };

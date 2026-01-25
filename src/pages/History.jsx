@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getWeeklyBalancesByUser } from '../services/portfolioService';
+import { getWeeklyBalancesByUser, getUserBalance } from '../services/portfolioService';
 import { getUserAllocations } from '../services/allocationService';
 
 const History = () => {
   const { currentUser } = useAuth();
   const [wb, setWb] = useState([]);
   const [allocs, setAllocs] = useState([]);
+  const [currentBalance, setCurrentBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState({ key: 'week', dir: 'default' }); // default -> asc -> desc
 
@@ -14,12 +15,14 @@ const History = () => {
     (async () => {
       if (!currentUser) return;
       try {
-        const [wbRes, aRes] = await Promise.allSettled([
+        const [wbRes, aRes, balanceRes] = await Promise.allSettled([
           getWeeklyBalancesByUser(currentUser.uid, 104),
-          getUserAllocations(currentUser.uid, 104)
+          getUserAllocations(currentUser.uid, 104),
+          getUserBalance(currentUser.uid)
         ]);
         setWb(wbRes.status === 'fulfilled' ? (wbRes.value || []) : []);
         setAllocs(aRes.status === 'fulfilled' ? (aRes.value || []) : []);
+        setCurrentBalance(balanceRes.status === 'fulfilled' ? balanceRes.value : null);
       } finally {
         setLoading(false);
       }
@@ -91,17 +94,43 @@ const History = () => {
       const w = byWb.get(weekId) || {};
       const a = byAlloc.get(weekId) || {};
       const hasWb = w && w.weekId;
-      const fallbackBase = hasWb ? null : findPrevEnd(weekId);
+      
+      let baseBalance = null;
+      if (hasWb) {
+        // If weeklyBalance exists, use its baseBalance
+        baseBalance = w.baseBalance;
+      } else {
+        // Try to find previous week's endBalance
+        const prevEnd = findPrevEnd(weekId);
+        if (prevEnd != null && prevEnd > 0) {
+          baseBalance = prevEnd;
+        } else {
+          // Fallback 1: use allocation's baseBalance if it exists and is valid
+          if (a && a.baseBalance != null && Number(a.baseBalance) > 0) {
+            baseBalance = Number(a.baseBalance);
+          } else {
+            // Fallback 2: use current balance from balances collection
+            if (currentBalance && currentBalance.latestBalance != null && Number(currentBalance.latestBalance) > 0) {
+              baseBalance = Number(currentBalance.latestBalance);
+            } else {
+              // Fallback 3: default starting balance for new users (100,000)
+              // This ensures new users always see a starting balance
+              baseBalance = 100000;
+            }
+          }
+        }
+      }
+      
       return {
         weekId,
-        baseBalance: hasWb ? w.baseBalance : fallbackBase,
+        baseBalance,
         endBalance: hasWb ? w.endBalance : null,
         resultReturnPct: hasWb ? w.resultReturnPct : null,
         allocation: getAllocString(a),
       };
     });
     return rows;
-  }, [wb, allocs]);
+  }, [wb, allocs, currentBalance]);
 
   const sorted = useMemo(() => {
     const arr = [...joinedRows];

@@ -843,26 +843,29 @@ exports.submitAllocation = functions.https.onCall(async (data, context) => {
     const prevWbSnap = await prevWbRef.get();
     if (prevWbSnap.exists && prevWbSnap.data()?.endBalance != null) {
       // Use previous week's end balance as the base for this week
-      baseBalance = prevWbSnap.data().endBalance;
+      baseBalance = Number(prevWbSnap.data().endBalance);
     } else {
       // If previous week's weeklyBalances doesn't exist, check if previous week allocation has endBalance
       // This handles cases where settlement happened but weeklyBalances wasn't created
       const prevAllocRef = db.collection('allocations').doc(`${prevWeekId}_${uid}`);
       const prevAllocSnap = await prevAllocRef.get();
       if (prevAllocSnap.exists && prevAllocSnap.data()?.endBalance != null) {
-        baseBalance = prevAllocSnap.data().endBalance;
+        baseBalance = Number(prevAllocSnap.data().endBalance);
       }
     }
   } catch (e) {
     console.warn(`Could not fetch prev week balance for ${uid} in week ${prevWeekId}, using current balance:`, e);
   }
 
+  // Ensure baseBalance is always a valid number (fallback to ensureBalance result or 100000)
+  baseBalance = Number(baseBalance) || await ensureBalance(uid) || 100000;
+
   const ref = db.collection('allocations').doc(`${weekId}_${uid}`);
   await ref.set({
     uid,
     weekId,
     pairs,
-    baseBalance,
+    baseBalance: Number(baseBalance), // Explicitly ensure it's a number
     submittedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   await logEvent({ category: 'allocation', action: 'submitAllocation', message: `Allocation submitted for ${weekId}`, data: { weekId, pairs }, user: { uid, email: context.auth.token.email } });
@@ -2512,4 +2515,267 @@ exports.sendManualEmail = functions.https.onCall(async (data, context) => {
   });
   
   return result;
+});
+
+/**
+ * Admin: List all users
+ */
+exports.adminListUsers = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  
+  try {
+    const usersSnap = await db.collection('users').get();
+    const users = [];
+    
+    for (const doc of usersSnap.docs) {
+      const userData = doc.data();
+      const uid = doc.id;
+      
+      // Get Firebase Auth user info
+      let authUser = null;
+      try {
+        authUser = await admin.auth().getUser(uid);
+      } catch (e) {
+        // User might not exist in Auth anymore
+        console.warn(`User ${uid} not found in Auth:`, e.message);
+      }
+      
+      // Convert Firestore Timestamps to serializable format
+      const serializeTimestamp = (ts) => {
+        if (!ts) return null;
+        if (ts.toDate) {
+          // Firestore Timestamp - convert to ISO string
+          return ts.toDate().toISOString();
+        } else if (ts.seconds) {
+          // Already serialized with seconds
+          return new Date(ts.seconds * 1000).toISOString();
+        } else if (ts._seconds) {
+          // Serialized with _seconds
+          return new Date(ts._seconds * 1000).toISOString();
+        }
+        return null;
+      };
+      
+      users.push({
+        uid,
+        username: userData.username || 'N/A',
+        email: userData.email || authUser?.email || 'N/A',
+        emailVerified: userData.emailVerified || false,
+        createdAt: serializeTimestamp(userData.createdAt),
+        updatedAt: serializeTimestamp(userData.updatedAt),
+        authExists: !!authUser,
+        authEmail: authUser?.email || null,
+      });
+    }
+    
+    await logEvent({
+      category: 'admin',
+      action: 'listUsers',
+      message: `Admin listed ${users.length} users`,
+      user: { email: context.auth.token.email },
+      data: { count: users.length }
+    });
+    
+    return { users, count: users.length };
+  } catch (error) {
+    await logEvent({
+      category: 'admin',
+      action: 'listUsers',
+      message: `Failed to list users: ${error.message}`,
+      user: { email: context.auth.token.email },
+      severity: 'error',
+      outcome: 'failure'
+    });
+    throw new functions.https.HttpsError('internal', error.message);
+  }
+});
+
+/**
+ * Admin: Delete user (Auth + Firestore + optionally allocations)
+ */
+exports.adminDeleteUser = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  
+  const { uid, deleteAllocations = false } = data || {};
+  
+  if (!uid) {
+    throw new functions.https.HttpsError('invalid-argument', 'User ID (uid) is required');
+  }
+  
+  // Prevent admin from deleting themselves
+  if (uid === context.auth.uid) {
+    throw new functions.https.HttpsError('failed-precondition', 'Cannot delete your own account');
+  }
+  
+  try {
+    const deletedItems = {
+      auth: false,
+      firestore: false,
+      allocations: 0,
+      balances: false,
+      weeklyBalances: 0,
+    };
+    
+    // 1. Delete from Firebase Auth
+    try {
+      await admin.auth().deleteUser(uid);
+      deletedItems.auth = true;
+    } catch (authError) {
+      if (authError.code === 'auth/user-not-found') {
+        console.warn(`User ${uid} not found in Auth, continuing...`);
+      } else {
+        throw authError;
+      }
+    }
+    
+    // 2. Delete from Firestore users collection
+    try {
+      await db.collection('users').doc(uid).delete();
+      deletedItems.firestore = true;
+    } catch (firestoreError) {
+      console.warn(`Failed to delete user doc: ${firestoreError.message}`);
+    }
+    
+    // 3. Delete balances
+    try {
+      await db.collection('balances').doc(uid).delete();
+      deletedItems.balances = true;
+    } catch (e) {
+      console.warn(`Failed to delete balance: ${e.message}`);
+    }
+    
+    // 4. Optionally delete allocations
+    if (deleteAllocations) {
+      try {
+        const allocationsSnap = await db.collection('allocations').where('uid', '==', uid).get();
+        const deletePromises = allocationsSnap.docs.map(doc => doc.ref.delete());
+        await Promise.all(deletePromises);
+        deletedItems.allocations = allocationsSnap.size;
+      } catch (e) {
+        console.warn(`Failed to delete allocations: ${e.message}`);
+      }
+      
+      // Also delete weeklyBalances
+      try {
+        const weeklyBalancesSnap = await db.collection('weeklyBalances').where('uid', '==', uid).get();
+        const deletePromises = weeklyBalancesSnap.docs.map(doc => doc.ref.delete());
+        await Promise.all(deletePromises);
+        deletedItems.weeklyBalances = weeklyBalancesSnap.size;
+      } catch (e) {
+        console.warn(`Failed to delete weeklyBalances: ${e.message}`);
+      }
+    }
+    
+    await logEvent({
+      category: 'admin',
+      action: 'deleteUser',
+      message: `Admin deleted user ${uid}`,
+      user: { email: context.auth.token.email },
+      data: { uid, deletedItems }
+    });
+    
+    return { 
+      success: true, 
+      deletedItems,
+      message: `User deleted successfully. Auth: ${deletedItems.auth}, Firestore: ${deletedItems.firestore}, Allocations: ${deletedItems.allocations}`
+    };
+  } catch (error) {
+    await logEvent({
+      category: 'admin',
+      action: 'deleteUser',
+      message: `Failed to delete user ${uid}: ${error.message}`,
+      user: { email: context.auth.token.email },
+      severity: 'error',
+      outcome: 'failure',
+      data: { uid }
+    });
+    throw new functions.https.HttpsError('internal', error.message);
+  }
+});
+
+/**
+ * Admin: Get user allocations and weekly balances
+ */
+exports.adminGetUserDetails = functions.https.onCall(async (data, context) => {
+  assertAdmin(context);
+  
+  const { uid } = data || {};
+  
+  if (!uid) {
+    throw new functions.https.HttpsError('invalid-argument', 'User ID (uid) is required');
+  }
+  
+  try {
+    // Get balance
+    const balanceRef = db.collection('balances').doc(uid);
+    const balanceSnap = await balanceRef.get();
+    const balanceData = balanceSnap.exists ? balanceSnap.data() : null;
+    
+    // Get weekly balances
+    let weeklyBalances = [];
+    try {
+      const weeklyBalancesSnap = await db.collection('weeklyBalances')
+        .where('uid', '==', uid)
+        .orderBy('weekId', 'desc')
+        .limit(104)
+        .get();
+      weeklyBalances = weeklyBalancesSnap.docs.map(d => d.data());
+    } catch (e) {
+      // If index not ready, try without orderBy
+      const weeklyBalancesSnap = await db.collection('weeklyBalances')
+        .where('uid', '==', uid)
+        .get();
+      weeklyBalances = weeklyBalancesSnap.docs
+        .map(d => d.data())
+        .sort((a, b) => (b.weekId || '').localeCompare(a.weekId || ''))
+        .slice(0, 104)
+        .sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+    }
+    
+    // Get allocations
+    let allocations = [];
+    try {
+      const allocationsSnap = await db.collection('allocations')
+        .where('uid', '==', uid)
+        .orderBy('weekId', 'desc')
+        .limit(104)
+        .get();
+      allocations = allocationsSnap.docs.map(d => d.data());
+    } catch (e) {
+      // If index not ready, try without orderBy
+      const allocationsSnap = await db.collection('allocations')
+        .where('uid', '==', uid)
+        .get();
+      allocations = allocationsSnap.docs
+        .map(d => d.data())
+        .sort((a, b) => (b.weekId || '').localeCompare(a.weekId || ''))
+        .slice(0, 104)
+        .sort((a, b) => (a.weekId || '').localeCompare(b.weekId || ''));
+    }
+    
+    await logEvent({
+      category: 'admin',
+      action: 'getUserDetails',
+      message: `Admin viewed details for user ${uid}`,
+      user: { email: context.auth.token.email },
+      data: { uid, allocationsCount: allocations.length, weeklyBalancesCount: weeklyBalances.length }
+    });
+    
+    return {
+      balance: balanceData,
+      weeklyBalances: weeklyBalances,
+      allocations: allocations
+    };
+  } catch (error) {
+    await logEvent({
+      category: 'admin',
+      action: 'getUserDetails',
+      message: `Failed to get user details for ${uid}: ${error.message}`,
+      user: { email: context.auth.token.email },
+      severity: 'error',
+      outcome: 'failure',
+      data: { uid }
+    });
+    throw new functions.https.HttpsError('internal', error.message);
+  }
 });

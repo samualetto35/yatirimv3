@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import './Dashboard.css';
@@ -46,6 +47,14 @@ const AdminLogs = () => {
     <div className="dashboard-container">
       <div className="dashboard-header">
         <h1>Admin Logs</h1>
+        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
+          <Link to="/admin/actions" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
+            Actions
+          </Link>
+          <Link to="/admin/users" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
+            Kullanıcı Yönetimi
+          </Link>
+        </div>
       </div>
       <div className="dashboard-content">
         {loading && (

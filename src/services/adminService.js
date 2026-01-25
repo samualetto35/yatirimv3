@@ -33,5 +33,21 @@ export const adminRecomputeFromWeek = async ({ weekId }) => {
   return res.data;
 };
 
+export const adminListUsers = async () => {
+  const fn = httpsCallable(functions, 'adminListUsers');
+  const res = await fn();
+  return res.data;
+};
 
+export const adminDeleteUser = async ({ uid, deleteAllocations = false }) => {
+  const fn = httpsCallable(functions, 'adminDeleteUser');
+  const res = await fn({ uid, deleteAllocations });
+  return res.data;
+};
+
+export const adminGetUserDetails = async (uid) => {
+  const fn = httpsCallable(functions, 'adminGetUserDetails');
+  const res = await fn({ uid });
+  return res.data;
+};
 

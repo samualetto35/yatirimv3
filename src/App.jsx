@@ -20,6 +20,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import AdminLogs from './pages/AdminLogs';
 import AdminActions from './pages/AdminActions';
+import AdminUsers from './pages/AdminUsers';
 // DB introspection utility intentionally not auto-run to avoid permission issues
 
 function App() {
@@ -103,6 +104,14 @@ function App() {
             element={
               <AdminRoute>
                 <AdminActions />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <AdminRoute>
+                <AdminUsers />
               </AdminRoute>
             }
           />
