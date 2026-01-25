@@ -571,26 +571,25 @@ const AdminPerformance = () => {
     return filtered;
   }, [usersByAllocationCount, filterText, sortBy, sortOrder]);
 
-  // Chart: Popular Pairs with tooltip
+  // Chart: Popular Pairs
   useEffect(() => {
     if (activeTab !== 'pairs' || !mostPopularPairs.length) return;
     const container = popularPairsChartRef.current;
-    if (!container || !container.parentElement) return;
-    
-    // Clear container first
-    container.innerHTML = '';
+    if (!container) return;
 
     const top10 = mostPopularPairs.slice(0, 10);
     const labels = top10.map(p => p.pair);
     const values = top10.map(p => p.totalWeight * 100);
-    const allocationCounts = top10.map(p => p.allocationCount);
 
     const x = labels.map((_, i) => i);
     const y = values;
 
+    const width = Math.max(400, container.clientWidth || 400);
+    const height = 300;
+
     const opts = {
-      width: Math.max(400, container.clientWidth || 400),
-      height: 300,
+      width,
+      height,
       series: [
         { label: 'Pair' },
         { 
@@ -633,55 +632,17 @@ const AdminPerformance = () => {
       ],
       legend: { show: false },
       padding: [12, 12, 8, 8],
-      cursor: { 
-        show: true, 
-        lock: true,
-        sync: { key: 'pairs' },
-        points: { show: true, size: 6 }
-      },
-      hooks: {
-        setCursor: [
-          (u) => {
-            const idx = u.cursor.idx;
-            if (idx != null && idx >= 0 && idx < labels.length) {
-              const pair = labels[idx];
-              const weight = values[idx];
-              const count = allocationCounts[idx];
-              const instrument = getInstrumentByCode(pair);
-              const fullName = instrument?.fullName || instrument?.name || pair;
-              
-              const tooltip = document.getElementById('pairs-tooltip');
-              if (tooltip) {
-                tooltip.innerHTML = `
-                  <div style="font-weight: 600; margin-bottom: 4px;">${pair}</div>
-                  <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 4px;">${fullName}</div>
-                  <div style="font-size: 0.875rem;">Ağırlık: <strong>${weight.toFixed(2)}%</strong></div>
-                  <div style="font-size: 0.875rem;">Allocation: <strong>${count}</strong></div>
-                `;
-                tooltip.style.display = 'block';
-              }
-            } else {
-              const tooltip = document.getElementById('pairs-tooltip');
-              if (tooltip) tooltip.style.display = 'none';
-            }
-          }
-        ]
-      }
+      cursor: { show: true, lock: true }
     };
 
     let chart = null;
-    const timeoutId = setTimeout(() => {
-      try {
-        if (container && container.parentElement && container.offsetWidth > 0) {
-          chart = new uPlot(opts, [x, y], container);
-        }
-      } catch (e) {
-        console.error('Chart error:', e);
-      }
-    }, 100);
+    try {
+      chart = new uPlot(opts, [x, y], container);
+    } catch (e) {
+      console.error('Chart error:', e);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
       if (chart) {
         try {
           chart.destroy();
@@ -692,25 +653,24 @@ const AdminPerformance = () => {
     };
   }, [activeTab, mostPopularPairs]);
 
-  // Chart: Weekly Returns with tooltip
+  // Chart: Weekly Returns
   useEffect(() => {
     if (activeTab !== 'overview' || !avgReturnsByWeek.length) return;
     const container = weeklyReturnsChartRef.current;
-    if (!container || !container.parentElement) return;
-    
-    // Clear container first
-    container.innerHTML = '';
+    if (!container) return;
 
     const labels = avgReturnsByWeek.map(w => w.weekId);
     const returns = avgReturnsByWeek.map(w => w.avgReturn);
-    const userCounts = avgReturnsByWeek.map(w => w.userCount);
 
     const x = labels.map((_, i) => i);
     const y = returns;
 
+    const width = Math.max(400, container.clientWidth || 400);
+    const height = 250;
+
     const opts = {
-      width: Math.max(400, container.clientWidth || 400),
-      height: 250,
+      width,
+      height,
       series: [
         { label: 'Week' },
         { 
@@ -756,52 +716,17 @@ const AdminPerformance = () => {
       ],
       legend: { show: false },
       padding: [12, 12, 8, 8],
-      cursor: { 
-        show: true, 
-        lock: true,
-        sync: { key: 'returns' },
-        points: { show: true, size: 6 }
-      },
-      hooks: {
-        setCursor: [
-          (u) => {
-            const idx = u.cursor.idx;
-            if (idx != null && idx >= 0 && idx < labels.length) {
-              const week = labels[idx];
-              const returnVal = returns[idx];
-              const count = userCounts[idx];
-              
-              const tooltip = document.getElementById('returns-tooltip');
-              if (tooltip) {
-                tooltip.innerHTML = `
-                  <div style="font-weight: 600; margin-bottom: 4px;">${week}</div>
-                  <div style="font-size: 0.875rem;">Ortalama Getiri: <strong style="color: ${returnVal >= 0 ? '#10b981' : '#ef4444'}">${(returnVal >= 0 ? '+' : '') + returnVal.toFixed(2)}%</strong></div>
-                  <div style="font-size: 0.875rem;">Kullanıcı Sayısı: <strong>${count}</strong></div>
-                `;
-                tooltip.style.display = 'block';
-              }
-            } else {
-              const tooltip = document.getElementById('returns-tooltip');
-              if (tooltip) tooltip.style.display = 'none';
-            }
-          }
-        ]
-      }
+      cursor: { show: true, lock: true }
     };
 
     let chart = null;
-    const timeoutId = setTimeout(() => {
-      try {
-        if (container && container.parentElement && container.offsetWidth > 0) {
-          chart = new uPlot(opts, [x, y], container);
-        }
-      } catch (e) {
-        console.error('Chart error:', e);
-      }
-    }, 100);
+    try {
+      chart = new uPlot(opts, [x, y], container);
+    } catch (e) {
+      console.error('Chart error:', e);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
       if (chart) {
         try {
           chart.destroy();
@@ -812,26 +737,25 @@ const AdminPerformance = () => {
     };
   }, [activeTab, avgReturnsByWeek]);
 
-  // Chart: Top Users Balance with tooltip
+  // Chart: Top Users Balance
   useEffect(() => {
     if (activeTab !== 'users' || !top10Percent.length) return;
     const container = userBalanceChartRef.current;
-    if (!container || !container.parentElement) return;
-    
-    // Clear container first
-    container.innerHTML = '';
+    if (!container) return;
 
     const top20 = top10Percent.slice(0, 20);
     const labels = top20.map(u => u.username);
     const values = top20.map(u => u.balance);
-    const emails = top20.map(u => u.email);
 
     const x = labels.map((_, i) => i);
     const y = values;
 
+    const width = Math.max(400, container.clientWidth || 400);
+    const height = 300;
+
     const opts = {
-      width: Math.max(400, container.clientWidth || 400),
-      height: 300,
+      width,
+      height,
       series: [
         { label: 'User' },
         { 
@@ -878,53 +802,17 @@ const AdminPerformance = () => {
       ],
       legend: { show: false },
       padding: [12, 12, 8, 8],
-      cursor: { 
-        show: true, 
-        lock: true,
-        sync: { key: 'users' },
-        points: { show: true, size: 6 }
-      },
-      hooks: {
-        setCursor: [
-          (u) => {
-            const idx = u.cursor.idx;
-            if (idx != null && idx >= 0 && idx < labels.length) {
-              const username = labels[idx];
-              const balance = values[idx];
-              const email = emails[idx];
-              
-              const tooltip = document.getElementById('users-tooltip');
-              if (tooltip) {
-                const formatted = Number.isFinite(balance) ? `₺${balance.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}` : '—';
-                tooltip.innerHTML = `
-                  <div style="font-weight: 600; margin-bottom: 4px;">${username}</div>
-                  <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 4px;">${email}</div>
-                  <div style="font-size: 0.875rem;">Bakiye: <strong>${formatted}</strong></div>
-                `;
-                tooltip.style.display = 'block';
-              }
-            } else {
-              const tooltip = document.getElementById('users-tooltip');
-              if (tooltip) tooltip.style.display = 'none';
-            }
-          }
-        ]
-      }
+      cursor: { show: true, lock: true }
     };
 
     let chart = null;
-    const timeoutId = setTimeout(() => {
-      try {
-        if (container && container.parentElement && container.offsetWidth > 0) {
-          chart = new uPlot(opts, [x, y], container);
-        }
-      } catch (e) {
-        console.error('Chart error:', e);
-      }
-    }, 100);
+    try {
+      chart = new uPlot(opts, [x, y], container);
+    } catch (e) {
+      console.error('Chart error:', e);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
       if (chart) {
         try {
           chart.destroy();
@@ -1091,24 +979,7 @@ const AdminPerformance = () => {
               </div>
               {avgReturnsByWeek.length > 0 ? (
                 <>
-                  <div style={{ position: 'relative' }}>
-                    <div ref={weeklyReturnsChartRef} style={{ marginBottom: '1rem' }}></div>
-                    <div 
-                      id="returns-tooltip"
-                      style={{
-                        position: 'absolute',
-                        background: 'rgba(0, 0, 0, 0.85)',
-                        color: 'white',
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        fontSize: '0.875rem',
-                        pointerEvents: 'none',
-                        display: 'none',
-                        zIndex: 1000,
-                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-                      }}
-                    ></div>
-                  </div>
+                  <div ref={weeklyReturnsChartRef} style={{ marginBottom: '1rem' }}></div>
                   <div className="admin-table-wrapper">
                     <table className="admin-table admin-table-compact">
                       <thead>
@@ -1181,25 +1052,7 @@ const AdminPerformance = () => {
               </div>
               {mostPopularPairs.length > 0 ? (
                 <>
-                  <div style={{ position: 'relative' }}>
-                    <div ref={popularPairsChartRef} style={{ marginBottom: '1rem' }}></div>
-                    <div 
-                      id="pairs-tooltip"
-                      style={{
-                        position: 'absolute',
-                        background: 'rgba(0, 0, 0, 0.85)',
-                        color: 'white',
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        fontSize: '0.875rem',
-                        pointerEvents: 'none',
-                        display: 'none',
-                        zIndex: 1000,
-                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                        maxWidth: '250px'
-                      }}
-                    ></div>
-                  </div>
+                  <div ref={popularPairsChartRef} style={{ marginBottom: '1rem' }}></div>
                   <div className="admin-table-wrapper">
                     <table className="admin-table admin-table-compact">
                       <thead>
@@ -1305,25 +1158,7 @@ const AdminPerformance = () => {
                 <h3 className="admin-card-title">Top Kullanıcılar (Bakiye)</h3>
               </div>
               {top10Percent.length > 0 && (
-                <div style={{ position: 'relative' }}>
-                  <div ref={userBalanceChartRef}></div>
-                  <div 
-                    id="users-tooltip"
-                    style={{
-                      position: 'absolute',
-                      background: 'rgba(0, 0, 0, 0.85)',
-                      color: 'white',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      fontSize: '0.875rem',
-                      pointerEvents: 'none',
-                      display: 'none',
-                      zIndex: 1000,
-                      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                      maxWidth: '250px'
-                    }}
-                  ></div>
-                </div>
+                <div ref={userBalanceChartRef}></div>
               )}
             </div>
 
