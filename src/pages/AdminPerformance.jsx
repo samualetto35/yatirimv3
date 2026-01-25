@@ -26,7 +26,6 @@ const AdminPerformance = () => {
   // Chart refs
   const popularPairsChartRef = useRef(null);
   const weeklyReturnsChartRef = useRef(null);
-  const userBalanceChartRef = useRef(null);
 
   useEffect(() => {
     loadData();
@@ -737,97 +736,6 @@ const AdminPerformance = () => {
     };
   }, [activeTab, avgReturnsByWeek]);
 
-  // Chart: Top Users Balance
-  useEffect(() => {
-    if (activeTab !== 'users' || !top10Percent.length) return;
-    const container = userBalanceChartRef.current;
-    if (!container) return;
-
-    const top20 = top10Percent.slice(0, 20).filter(u => Number(u.balance) > 0);
-    if (top20.length === 0) return;
-
-    const labels = top20.map(u => u.username || 'N/A');
-    const values = top20.map(u => Number(u.balance) || 0);
-
-    const x = labels.map((_, i) => i);
-    const y = values;
-
-    const width = Math.max(400, container.clientWidth || 400);
-    const height = 300;
-
-    const opts = {
-      width,
-      height,
-      series: [
-        { label: 'User' },
-        { 
-          label: 'Balance',
-          stroke: '#8b5cf6',
-          fill: 'rgba(139, 92, 246, 0.1)',
-          width: 2,
-          points: { show: true, size: 4 }
-        }
-      ],
-      axes: [
-        {
-          show: true,
-          stroke: '#e5e7eb',
-          grid: { show: true, stroke: '#f3f4f6' },
-          ticks: { show: true, stroke: '#9ca3af' },
-          side: 2,
-          labelGap: 8,
-          labelSize: 11,
-          labelFont: '11px system-ui',
-          label: 'Kullanıcı',
-          space: (u, seriesIdx, scaleMin, scaleMax, plotDim) => {
-            const maxLabelWidth = Math.max(...labels.map(l => (l.length || 0) * 6));
-            return Math.max(50, maxLabelWidth);
-          },
-          values: (u, vals) => vals.map(v => labels[Math.round(v)] || '')
-        },
-        {
-          show: true,
-          stroke: '#e5e7eb',
-          grid: { show: true, stroke: '#f3f4f6' },
-          ticks: { show: true, stroke: '#9ca3af' },
-          side: 3,
-          labelGap: 8,
-          labelSize: 11,
-          labelFont: '11px system-ui',
-          label: 'Bakiye (₺)',
-          format: (u, val) => {
-            if (val >= 1e6) return `₺${(val / 1e6).toFixed(1)}M`;
-            if (val >= 1e3) return `₺${(val / 1e3).toFixed(0)}k`;
-            return `₺${val.toFixed(0)}`;
-          }
-        }
-      ],
-      legend: { show: false },
-      padding: [12, 12, 8, 8],
-      cursor: { show: true, lock: true },
-      scales: {
-        x: { time: false },
-        y: { auto: true }
-      }
-    };
-
-    let chart = null;
-    try {
-      chart = new uPlot(opts, [x, y], container);
-    } catch (e) {
-      console.error('Chart error:', e);
-    }
-
-    return () => {
-      if (chart) {
-        try {
-          chart.destroy();
-        } catch (e) {
-          console.warn('Chart destroy error:', e);
-        }
-      }
-    };
-  }, [activeTab, top10Percent]);
 
   const formatMoney = (n) => {
     const num = Number(n);
@@ -1159,14 +1067,6 @@ const AdminPerformance = () => {
 
         {activeTab === 'users' && (
           <>
-            <div className="admin-card" style={{ marginBottom: '1.5rem' }}>
-              <div className="admin-card-header">
-                <h3 className="admin-card-title">Top Kullanıcılar (Bakiye)</h3>
-              </div>
-              {top10Percent.length > 0 && (
-                <div ref={userBalanceChartRef}></div>
-              )}
-            </div>
 
             <div className="admin-card" style={{ marginBottom: '1.5rem' }}>
               <div className="admin-card-header">
