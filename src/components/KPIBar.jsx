@@ -148,7 +148,7 @@ const KPIBar = () => {
 
   const fmtMoney = (n) => {
     const num = Number(n);
-    return Number.isFinite(num) ? `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+    return Number.isFinite(num) ? `₺${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
   };
   const fmtPct = (n) =>
     typeof n === 'number' && Number.isFinite(n) ? `${n.toFixed(2)}%` : '—';

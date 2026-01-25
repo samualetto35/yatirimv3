@@ -39,6 +39,7 @@ const InlineAllocationBox = () => {
   const [openIdx, setOpenIdx] = useState(null);
   const [cat, setCat] = useState('Tümü');
   const [query, setQuery] = useState('');
+  const [isMobile, setIsMobile] = useState(false);
   
   const categories = useMemo(() => {
     const s = new Set(pairOptions.map(p => p.categoryName));
@@ -67,6 +68,13 @@ const InlineAllocationBox = () => {
       }
     })();
   }, [currentUser]);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 480);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const total = useMemo(() => rows.reduce((acc, r) => acc + numberOrZero(r.weight), 0), [rows]);
   const canTrade = week?.status === 'open';
@@ -271,97 +279,213 @@ const InlineAllocationBox = () => {
         </div>
       </div>
       {expanded && (
-        <div style={{ marginTop: 10, border: '1px solid #e9ecef', borderRadius: 16, padding: 12 }}>
+        <div style={{ marginTop: 10, border: '1px solid #e9ecef', borderRadius: 16, padding: '12px', background: '#fff' }}>
           {loading ? (
-            <p style={{ color: '#6c757d' }}>Loading…</p>
+            <p style={{ color: '#6c757d', fontSize: 13 }}>Yükleniyor…</p>
           ) : (
-            <div style={{ display: 'grid', gap: 12 }}>
-              {rows.map((r, idx) => (
-                <>
-                  <div key={`row_${idx}`} style={{ display: 'grid', gridTemplateColumns: '1fr 140px auto', gap: 8, alignItems: 'center', border: '1px solid #edf2f7', borderRadius: 12, padding: 12 }}>
-                    <button
-                      type="button"
-                      onClick={() => setOpenIdx(openIdx === idx ? null : idx)}
-                      style={{ width: '100%', textAlign: 'left', display: 'inline-flex', alignItems: 'center', height: 44, padding: '0 14px', borderRadius: 12, border: '1px solid #ced4da', background: '#fff', cursor: 'pointer', color: '#1a1a1a', fontWeight: 400, fontSize: 15 }}
-                    >
-                      {r.symbol || 'Pair seçiniz'}
-                    </button>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={r.weight}
-                      onChange={e => {
-                        const raw = e.target.value.replace(/[^0-9]/g, '');
-                        const v = raw === '' ? '' : String(Math.max(0, Math.min(100, Number(raw))));
-                        setRows(prev => prev.map((x, i) => i === idx ? { ...x, weight: v } : x));
+            <div style={{ display: 'grid', gap: 10 }}>
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                {categories.map(c => (
+                  <button key={c} type="button" onClick={() => setCat(c)}
+                    style={{ 
+                      padding: '6px 10px', 
+                      borderRadius: 999, 
+                      border: '1px solid ' + (cat === c ? '#0d6efd' : '#e9ecef'), 
+                      background: cat === c ? '#e7f1ff' : '#fff', 
+                      color: cat === c ? '#0d6efd' : '#495057', 
+                      fontWeight: 600, 
+                      fontSize: 11 
+                    }}
+                  >{c}</button>
+                ))}
+              </div>
+              
+              {/* Search */}
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                <input 
+                  type="text" 
+                  placeholder="Ara (sembol / isim)" 
+                  value={query} 
+                  onChange={(e) => setQuery(e.target.value)} 
+                  style={{ 
+                    width: '100%', 
+                    padding: '10px 12px', 
+                    borderRadius: 10, 
+                    border: '1px solid #e9ecef', 
+                    fontSize: 13 
+                  }} 
+                />
+              </div>
+
+              {/* All instruments list */}
+              <div style={{ 
+                maxHeight: '60vh', 
+                overflowY: 'auto',
+                border: '1px solid #f1f3f5',
+                borderRadius: 12,
+                padding: 8
+              }}>
+                {pairOptions.filter(p => {
+                  const byCat = cat === 'Tümü' || p.categoryName === cat;
+                  const q = query.toLowerCase();
+                  const byQuery = !q || p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.fullName.toLowerCase().includes(q);
+                  return byCat && byQuery;
+                }).map(opt => {
+                  const existingRow = rows.find(r => r.symbol === opt.symbol);
+                  const weight = existingRow ? existingRow.weight : '';
+                  return (
+                    <div 
+                      key={opt.symbol} 
+                      style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) auto',
+                        gap: isMobile ? 6 : 8,
+                        alignItems: 'center',
+                        padding: isMobile ? '8px 6px' : '10px 8px',
+                        borderBottom: '1px solid #f1f3f5',
+                        fontSize: 12
                       }}
-                      style={{ width: 100, height: 44, padding: '0 28px 0 12px', borderRadius: 12, border: '1px solid #ced4da', fontSize: 16 }}
-                    />
-                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#6c757d', fontSize: 12 }}>%</span>
-                  </div>
-                  <button type="button" className="btn-chip ghost" style={{ alignSelf: 'center' }} onClick={() => setRows(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev)} disabled={rows.length <= 1}>Kaldır</button>
-                </div>
-                {openIdx === idx && (
-                  <div style={{ gridColumn: '1 / -1', marginTop: 8, background: '#fff', border: '1px solid #e9ecef', borderRadius: 12, boxShadow: '0 8px 20px rgba(0,0,0,.06)', padding: 12 }}>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                      {categories.map(c => (
-                        <button key={c} type="button" onClick={() => setCat(c)}
-                          style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid ' + (cat === c ? '#0d6efd' : '#e9ecef'), background: cat === c ? '#e7f1ff' : '#fff', color: cat === c ? '#0d6efd' : '#495057', fontWeight: 700, fontSize: 13 }}
-                        >{c}</button>
-                      ))}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 6, 
+                          marginBottom: 4,
+                          flexWrap: 'wrap'
+                        }}>
+                          <span style={{ fontWeight: 700, fontSize: isMobile ? 11 : 12, color: '#111827' }}>
+                            {opt.categoryIcon} {opt.symbol}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: isMobile ? 10 : 11, color: '#6c757d' }}>
+                            {opt.name}
+                          </span>
+                        </div>
+                        <div style={{ 
+                          fontSize: isMobile ? 9 : 10, 
+                          color: '#9ca3af', 
+                          lineHeight: 1.4,
+                          wordBreak: 'break-word'
+                        }}>
+                          {opt.fullName}
+                        </div>
+                      </div>
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 6,
+                        flexShrink: 0,
+                        width: isMobile ? '100%' : 'auto'
+                      }}>
+                        <div style={{ position: 'relative', width: isMobile ? '100%' : 70 }}>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="0"
+                            value={weight}
+                            onChange={e => {
+                              const raw = e.target.value.replace(/[^0-9]/g, '');
+                              const v = raw === '' ? '' : String(Math.max(0, Math.min(100, Number(raw))));
+                              setRows(prev => {
+                                if (v === '') {
+                                  // Remove from rows if weight is empty
+                                  return prev.filter(r => r.symbol !== opt.symbol);
+                                }
+                                if (existingRow) {
+                                  return prev.map(r => r.symbol === opt.symbol ? { ...r, weight: v } : r);
+                                } else {
+                                  return [...prev, { symbol: opt.symbol, weight: v }];
+                                }
+                              });
+                            }}
+                            style={{ 
+                              width: '100%', 
+                              height: isMobile ? 32 : 36, 
+                              padding: '0 24px 0 8px', 
+                              borderRadius: 8, 
+                              border: '1px solid #ced4da', 
+                              fontSize: isMobile ? 12 : 13,
+                              textAlign: 'right'
+                            }}
+                          />
+                          <span style={{ 
+                            position: 'absolute', 
+                            right: 8, 
+                            top: '50%', 
+                            transform: 'translateY(-50%)', 
+                            color: '#6c757d', 
+                            fontSize: 10 
+                          }}>%</span>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ position: 'relative', marginBottom: 10 }}>
-                      <input type="text" placeholder="Ara (sembol / isim)" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #e9ecef', fontSize: 16 }} />
-                    </div>
-                    <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                      {pairOptions.filter(p => {
-                        const byCat = cat === 'Tümü' || p.categoryName === cat;
-                        const q = query.toLowerCase();
-                        const byQuery = !q || p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.fullName.toLowerCase().includes(q);
-                        return byCat && byQuery;
-                      }).map(opt => {
-                        const isDisabled = rows.some((x, i) => i !== idx && x.symbol === opt.symbol);
-                        return (
-                          <button key={opt.symbol} type="button" disabled={isDisabled}
-                            onClick={() => { if (!isDisabled) { setRows(prev => prev.map((x, i) => i === idx ? { ...x, symbol: opt.symbol } : x)); setOpenIdx(null); } }}
-                            style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: 12, border: '1px solid #f1f3f5', background: '#fff', marginBottom: 8, color: isDisabled ? '#adb5bd' : '#212529', cursor: isDisabled ? 'not-allowed' : 'pointer', fontSize: 15 }}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 2 }}>
-                                  {opt.categoryIcon} {opt.symbol} — {opt.name}
-                                </div>
-                                <div style={{ fontWeight: 500, color: '#6c757d', fontSize: 12 }}>
-                                  {opt.fullName} • {opt.currency}
-                                </div>
-                              </div>
-                              <span style={{ fontSize: 11, color: '#0d6efd', background: '#e7f1ff', borderRadius: 999, padding: '4px 8px', whiteSpace: 'nowrap' }}>
-                                {opt.source.toUpperCase()}
-                              </span>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+                  );
+                })}
+                {pairOptions.filter(p => {
+                  const byCat = cat === 'Tümü' || p.categoryName === cat;
+                  const q = query.toLowerCase();
+                  const byQuery = !q || p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.fullName.toLowerCase().includes(q);
+                  return byCat && byQuery;
+                }).length === 0 && (
+                  <div style={{ color: '#6c757d', fontSize: 12, padding: 16, textAlign: 'center' }}>
+                    Sonuç bulunamadı
                   </div>
                 )}
-                </>
-              ))}
-              <div>
-                <button type="button" className="btn-chip" onClick={() => {
-                  const remaining = pairOptions.find(p => !rows.some(r => r.symbol === p.symbol));
-                  if (remaining) setRows(prev => [...prev, { symbol: remaining.symbol, weight: '' }]);
-                }} disabled={rows.length >= pairOptions.length}>+ Ekle</button>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6c757d', fontSize: 12 }}>{!canSave ? disabledReason : ''}</span>
-                <button className={`btn-chip ${canSave ? 'primary' : 'ghost'}`} disabled={!canSave} onClick={onSave}>
+
+              {/* Total percentage - prominent display */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '12px 16px',
+                borderRadius: 12,
+                background: total === 100 ? '#f0fdf4' : (total > 100 ? '#fef2f2' : '#fffbeb'),
+                border: `2px solid ${total === 100 ? '#16a34a' : (total > 100 ? '#dc2626' : '#f59e0b')}`,
+                marginTop: 8
+              }}>
+                <div>
+                  <div style={{ 
+                    fontWeight: 700, 
+                    fontSize: 12, 
+                    color: '#111827',
+                    marginBottom: 2
+                  }}>
+                    Toplam Yüzde
+                  </div>
+                  <div style={{ 
+                    fontSize: 10, 
+                    color: '#6c757d' 
+                  }}>
+                    {!canSave ? disabledReason : 'Yatırım yapabilirsiniz'}
+                  </div>
+                </div>
+                <div style={{ 
+                  fontSize: 24, 
+                  fontWeight: 800, 
+                  color: total === 100 ? '#16a34a' : (total > 100 ? '#dc2626' : '#f59e0b')
+                }}>
+                  {total}%
+                </div>
+              </div>
+
+              {/* Save button */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button 
+                  className={`btn-chip ${canSave ? 'primary' : 'ghost'}`} 
+                  disabled={!canSave} 
+                  onClick={onSave}
+                  style={{
+                    fontSize: 14,
+                    padding: '10px 20px',
+                    fontWeight: 700
+                  }}
+                >
                   {saving ? 'Kaydediliyor…' : (hasExisting ? 'Yatırım Güncelle' : 'Yatırım Kaydet')}
                 </button>
               </div>
-              {message && <div style={{ gridColumn: '1 / -1', color: '#16a34a', fontSize: 12 }}>{message}</div>}
+              {message && <div style={{ color: '#16a34a', fontSize: 12, textAlign: 'center' }}>{message}</div>}
             </div>
           )}
         </div>

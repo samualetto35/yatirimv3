@@ -128,7 +128,7 @@ const PortfolioHistory = () => {
 
   const fmtMoney = (n) => {
     const num = Number(n);
-    return Number.isFinite(num) ? `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+    return Number.isFinite(num) ? `₺${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
   };
   const fmtPct = (n) => (Number.isFinite(Number(n)) ? `${Number(n).toFixed(2)}%` : '—');
 

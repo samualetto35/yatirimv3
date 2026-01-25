@@ -10,16 +10,16 @@ const fmtMoney = (n) => {
     minimumFractionDigits: hasCents ? 2 : 0,
     maximumFractionDigits: hasCents ? 2 : 0,
   });
-  return `$${nf.format(num)}`;
+  return `₺${nf.format(num)}`;
 };
 
 const fmtCompact = (n) => {
   const v = Math.abs(Number(n));
   if (!Number.isFinite(v)) return '—';
-  if (v >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `$${Math.round(n / 1e3)}k`;
-  return `$${Math.round(n).toLocaleString()}`;
+  if (v >= 1e9) return `₺${(n / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `₺${(n / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `₺${Math.round(n / 1e3)}k`;
+  return `₺${Math.round(n).toLocaleString()}`;
 };
 
 const PortfolioChart = ({ data }) => {
@@ -185,7 +185,7 @@ const PortfolioChart = ({ data }) => {
             if (Math.abs(ymax - baselineValue) > tol) labelIdx.add(idxMax);
             return vals.map((v, i) => {
               if (!labelIdx.has(i)) return '';
-              if (i === idxBaseline) return view === 'return' ? '0%' : '$100k';
+              if (i === idxBaseline) return view === 'return' ? '0%' : '₺100k';
               if (view === 'return') return fmtPct(v);
               return fmtCompact(v);
             });
@@ -210,7 +210,7 @@ const PortfolioChart = ({ data }) => {
       hooks: {
         draw: [
           (u) => {
-            // dashed baseline (0% or $100k) for quick orientation
+            // dashed baseline (0% or ₺100k) for quick orientation
             const yPos = u.valToPos(baselineValue, 'y', true);
             const ctx = u.ctx;
             ctx.save();

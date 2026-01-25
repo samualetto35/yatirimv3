@@ -147,8 +147,8 @@ const History = () => {
                 return (
                   <tr key={row.weekId}>
                     <td>{row.weekId}</td>
-                    <td>{row.baseBalance != null ? `$${Number(row.baseBalance).toLocaleString()}` : '—'}</td>
-                    <td>{row.endBalance != null ? `$${Number(row.endBalance).toLocaleString()}` : '—'}</td>
+                    <td>{row.baseBalance != null ? `₺${Number(row.baseBalance).toLocaleString()}` : '—'}</td>
+                    <td>{row.endBalance != null ? `₺${Number(row.endBalance).toLocaleString()}` : '—'}</td>
                     <td style={{ color: Number(row.resultReturnPct || 0) > 0 ? '#16a34a' : (Number(row.resultReturnPct || 0) < 0 ? '#dc2626' : '#9ca3af') }}>
                       {row.resultReturnPct != null ? `${Number(row.resultReturnPct).toFixed(2)}%` : '—'}
                     </td>
