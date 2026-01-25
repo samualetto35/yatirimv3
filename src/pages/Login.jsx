@@ -20,6 +20,11 @@ const Login = () => {
     try {
       setLoading(true);
       await login(email, password);
+      
+      // Wait a bit for onAuthStateChanged to update currentUser
+      // This prevents race condition where navigate happens before currentUser is set
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       navigate('/dashboard');
     } catch (error) {
       // Error handling is done in AuthContext

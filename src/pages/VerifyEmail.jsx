@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { auth } from '../firebase/config';
 import { useEmailVerificationListener } from '../hooks/useEmailVerificationListener';
+import { toast } from 'react-toastify';
 import './Auth.css';
 
 const VerifyEmail = () => {
@@ -42,10 +43,24 @@ const VerifyEmail = () => {
         await user.reload();
         if (user.emailVerified) {
           navigate('/login');
+        } else {
+          toast.info('Email not verified yet. Please check your inbox and click the verification link.');
         }
       }
     } catch (error) {
       console.error('Error checking verification:', error);
+      
+      // Handle expired verification link
+      if (error.code === 'auth/expired-action-code' || error.message?.includes('expired')) {
+        toast.warning('Verification link has expired. A new verification email will be sent.');
+        try {
+          await resendVerification();
+        } catch (resendError) {
+          console.error('Error resending verification:', resendError);
+        }
+      } else {
+        toast.error('Error checking verification status. Please try again.');
+      }
     } finally {
       setChecking(false);
     }

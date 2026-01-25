@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -10,7 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { toast } from 'react-toastify';
-import { createUserDocument, ensureUserDocument, updateEmailVerificationStatus } from '../services/userService';
+import { createUserDocument, ensureUserDocument, updateEmailVerificationStatus, getUserDocument } from '../services/userService';
 
 const AuthContext = createContext();
 
@@ -26,6 +26,7 @@ export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [userDocLoading, setUserDocLoading] = useState(false);
 
   // Register new user
   const register = async (email, password, username) => {
@@ -52,20 +53,20 @@ export const AuthProvider = ({ children }) => {
       // Send verification email
       await sendEmailVerification(userCredential.user);
       
-      toast.success('Registration successful! Please check your email to verify your account.');
+      toast.success('Kayıt başarılı! E-postanızı doğrulamanız gerekiyor. Doğruladıktan sonra giriş yapabilirsiniz.');
       return userCredential;
     } catch (error) {
-      let errorMessage = 'Registration failed. Please try again.';
+      let errorMessage = 'Kayıt başarısız. Lütfen tekrar deneyin.';
       
       switch (error.code) {
         case 'auth/email-already-in-use':
-          errorMessage = 'This email is already registered.';
+          errorMessage = 'Bu e-posta adresi zaten kayıtlı. Lütfen giriş yapın veya farklı bir e-posta adresi kullanın.';
           break;
         case 'auth/invalid-email':
-          errorMessage = 'Invalid email address.';
+          errorMessage = 'Geçersiz e-posta adresi. Lütfen geçerli bir e-posta adresi girin.';
           break;
         case 'auth/weak-password':
-          errorMessage = 'Password should be at least 6 characters.';
+          errorMessage = 'Şifre en az 6 karakter olmalıdır. Lütfen daha güçlü bir şifre seçin.';
           break;
       }
       
@@ -79,11 +80,21 @@ export const AuthProvider = ({ children }) => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
+      // Reload user to get the most up-to-date verification status
+      // This is important in case verification happened just before login
+      await userCredential.user.reload();
+      
       // Check if email is verified
       if (!userCredential.user.emailVerified) {
-        await sendEmailVerification(userCredential.user);
+        // Send verification email before signout to avoid rate limiting
+        try {
+          await sendEmailVerification(userCredential.user);
+        } catch (verifyError) {
+          // If sending email fails, still show the message
+          console.warn('Failed to send verification email:', verifyError);
+        }
         await signOut(auth);
-        toast.warning('Please verify your email before logging in. A new verification email has been sent.');
+        toast.warning('Lütfen giriş yapmadan önce e-postanızı doğrulayın. Yeni bir doğrulama e-postası gönderildi.');
         throw new Error('Email not verified');
       }
 
@@ -95,29 +106,50 @@ export const AuthProvider = ({ children }) => {
         // Continue with login even if Firestore fails
       }
       
-      toast.success('Login successful!');
+      toast.success('Giriş başarılı!');
       return userCredential;
     } catch (error) {
-      let errorMessage = 'Login failed. Please try again.';
-      
+      // If it's our custom email verification error, don't show other errors
       if (error.message === 'Email not verified') {
-        // Already handled above
         throw error;
       }
       
+      // Check if this might be an unverified email issue
+      // Sometimes Firebase returns 'too-many-requests' when user tries to login with unverified email multiple times
+      if (error.code === 'auth/too-many-requests') {
+        // Try to check if user exists and is unverified
+        try {
+          const user = auth.currentUser;
+          if (user && !user.emailVerified) {
+            await sendEmailVerification(user);
+            await signOut(auth);
+            toast.warning('Lütfen giriş yapmadan önce e-postanızı doğrulayın. Yeni bir doğrulama e-postası gönderildi.');
+            throw new Error('Email not verified');
+          }
+        } catch (checkError) {
+          if (checkError.message === 'Email not verified') {
+            throw checkError;
+          }
+        }
+      }
+      
+      let errorMessage = 'Giriş başarısız. Lütfen tekrar deneyin.';
+      
       switch (error.code) {
         case 'auth/user-not-found':
+          errorMessage = 'Bu e-posta adresi ile kayıtlı bir hesap bulunamadı. Lütfen kayıt olun.';
+          break;
         case 'auth/wrong-password':
-          errorMessage = 'Invalid email or password.';
+          errorMessage = 'Şifre yanlış. Lütfen şifrenizi kontrol edip tekrar deneyin.';
           break;
         case 'auth/invalid-email':
-          errorMessage = 'Invalid email address.';
+          errorMessage = 'Geçersiz e-posta adresi. Lütfen geçerli bir e-posta adresi girin.';
           break;
         case 'auth/user-disabled':
-          errorMessage = 'This account has been disabled.';
+          errorMessage = 'Bu hesap devre dışı bırakılmış. Lütfen destek ekibi ile iletişime geçin.';
           break;
         case 'auth/too-many-requests':
-          errorMessage = 'Too many failed attempts. Please wait a few minutes before trying again or reset your password.';
+          errorMessage = 'Çok fazla başarısız deneme yapıldı. Lütfen birkaç dakika bekleyip tekrar deneyin veya şifrenizi sıfırlayın.';
           break;
       }
       
@@ -130,9 +162,9 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       await signOut(auth);
-      toast.success('Logged out successfully!');
+      toast.success('Başarıyla çıkış yapıldı!');
     } catch (error) {
-      toast.error('Failed to logout. Please try again.');
+      toast.error('Çıkış yapılamadı. Lütfen tekrar deneyin.');
       throw error;
     }
   };
@@ -141,16 +173,16 @@ export const AuthProvider = ({ children }) => {
   const resetPassword = async (email) => {
     try {
       await sendPasswordResetEmail(auth, email);
-      toast.success('Password reset email sent! Please check your inbox.');
+      toast.success('Şifre sıfırlama e-postası gönderildi! Lütfen gelen kutunuzu kontrol edin.');
     } catch (error) {
-      let errorMessage = 'Failed to send reset email.';
+      let errorMessage = 'Şifre sıfırlama e-postası gönderilemedi.';
       
       switch (error.code) {
         case 'auth/user-not-found':
-          errorMessage = 'No account found with this email.';
+          errorMessage = 'Bu e-posta adresi ile kayıtlı bir hesap bulunamadı.';
           break;
         case 'auth/invalid-email':
-          errorMessage = 'Invalid email address.';
+          errorMessage = 'Geçersiz e-posta adresi. Lütfen geçerli bir e-posta adresi girin.';
           break;
       }
       
@@ -164,16 +196,20 @@ export const AuthProvider = ({ children }) => {
     try {
       const user = auth.currentUser;
       if (user) {
+        // Reload user first to get latest status
+        await user.reload();
         await sendEmailVerification(user);
-        toast.success('Verification email sent! Please check your inbox.');
+        toast.success('Doğrulama e-postası gönderildi! Lütfen gelen kutunuzu kontrol edin.');
       } else {
-        toast.error('No user found. Please login again.');
+        toast.error('Kullanıcı bulunamadı. Lütfen tekrar giriş yapın.');
       }
     } catch (error) {
-      let errorMessage = 'Failed to send verification email.';
+      let errorMessage = 'Doğrulama e-postası gönderilemedi.';
       
       if (error.code === 'auth/too-many-requests') {
-        errorMessage = 'Too many requests. Please wait a few minutes before trying again.';
+        errorMessage = 'Çok fazla istek yapıldı. Lütfen birkaç dakika bekleyip tekrar deneyin.';
+      } else if (error.code === 'auth/expired-action-code') {
+        errorMessage = 'Önceki doğrulama bağlantısının süresi doldu. Yeni bir e-posta gönderildi.';
       }
       
       toast.error(errorMessage);
@@ -181,43 +217,89 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Function to ensure user document exists and is loaded
+  const ensureUserDocLoaded = useCallback(async (user) => {
+    if (!user || !user.emailVerified) {
+      setUserDoc(null);
+      setUserDocLoading(false);
+      return null;
+    }
+
+    setUserDocLoading(true);
+    try {
+      // First check if user exists in DB
+      const existingUserDoc = await getUserDocument(user.uid);
+      
+      if (!existingUserDoc) {
+        // User doesn't exist in DB - this is first login
+        // Create the document
+        const firestoreUser = await ensureUserDocument(user);
+        const { _isNewUser, ...userDocData } = firestoreUser;
+        setUserDoc(userDocData);
+        
+        // Mark as new user for modal display
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`firstLogin_${user.uid}`, 'true');
+        }
+        
+        // Sync UI preference
+        if (typeof window !== 'undefined' && firestoreUser?.topTabsStyle) {
+          localStorage.setItem('topTabsStyle', firestoreUser.topTabsStyle);
+          window.dispatchEvent(new Event('topTabsStyleChanged'));
+        }
+        return { ...userDocData, _isNewUser: true };
+      } else {
+        // User exists in DB - update if needed
+        const firestoreUser = await ensureUserDocument(user);
+        const { _isNewUser, ...userDocData } = firestoreUser;
+        setUserDoc(userDocData);
+        
+        // Sync UI preference
+        if (typeof window !== 'undefined' && firestoreUser?.topTabsStyle) {
+          localStorage.setItem('topTabsStyle', firestoreUser.topTabsStyle);
+          window.dispatchEvent(new Event('topTabsStyleChanged'));
+        }
+        return { ...userDocData, _isNewUser: false };
+      }
+    } catch (error) {
+      console.warn('Firestore sync warning:', error.message);
+      // Continue without Firestore data
+      setUserDoc(null);
+      return null;
+    } finally {
+      setUserDocLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       // Only set user as current if email is verified
       if (user && user.emailVerified) {
         setCurrentUser(user);
         
-        // Try to sync with Firestore (non-blocking)
-        try {
-          const firestoreUser = await ensureUserDocument(user);
-          setUserDoc(firestoreUser);
-          // Sync UI preference for top tabs from Firestore into localStorage so UI picks it up
-          if (typeof window !== 'undefined' && firestoreUser?.topTabsStyle) {
-            localStorage.setItem('topTabsStyle', firestoreUser.topTabsStyle);
-            window.dispatchEvent(new Event('topTabsStyleChanged'));
-          }
-        } catch (error) {
-          console.warn('Firestore sync warning:', error.message);
-          // Continue without Firestore data
-          setUserDoc(null);
-        }
+        // Ensure user document exists in Firestore
+        await ensureUserDocLoaded(user);
       } else if (user && !user.emailVerified) {
         // User exists but not verified - don't set as current user
         setCurrentUser(null);
         setUserDoc(null);
+        setUserDocLoading(false);
       } else {
         setCurrentUser(null);
         setUserDoc(null);
+        setUserDocLoading(false);
       }
       setLoading(false);
     });
 
     return unsubscribe;
-  }, []);
+  }, [ensureUserDocLoaded]);
 
   const value = {
     currentUser,
     userDoc,
+    userDocLoading,
+    ensureUserDocLoaded,
     register,
     login,
     logout,

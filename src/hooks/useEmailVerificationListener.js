@@ -30,6 +30,12 @@ export const useEmailVerificationListener = (user) => {
         }
       } catch (error) {
         console.error('Error checking verification status:', error);
+        
+        // Handle expired verification link or other errors
+        if (error.code === 'auth/expired-action-code' || error.message?.includes('expired')) {
+          // Don't spam the user with errors, just log it
+          console.warn('Verification link may have expired. User should request a new one.');
+        }
       }
     };
 

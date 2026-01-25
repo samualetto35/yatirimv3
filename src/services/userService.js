@@ -93,20 +93,22 @@ export const ensureUserDocument = async (firebaseUser) => {
     
     if (!userDoc) {
       // User exists in Auth but not in Firestore - create it
+      // This indicates first-time login
       console.log('User not found in Firestore, creating document...');
       const newUserDoc = await createUserDocument(firebaseUser.uid, {
         username: firebaseUser.displayName || 'User',
         email: firebaseUser.email,
         emailVerified: firebaseUser.emailVerified,
       });
-      return newUserDoc;
+      // Return object with isNewUser flag
+      return { ...newUserDoc, _isNewUser: true };
     } else {
       // User exists - update verification status if it changed
       if (userDoc.emailVerified !== firebaseUser.emailVerified) {
         await updateEmailVerificationStatus(firebaseUser.uid, firebaseUser.emailVerified);
-        return { ...userDoc, emailVerified: firebaseUser.emailVerified };
+        return { ...userDoc, emailVerified: firebaseUser.emailVerified, _isNewUser: false };
       }
-      return userDoc;
+      return { ...userDoc, _isNewUser: false };
     }
   } catch (error) {
     console.error('Error ensuring user document:', error);

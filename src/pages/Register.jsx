@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { toast } from 'react-toastify';
 import './Auth.css';
 
 const Register = () => {
@@ -9,17 +10,21 @@ const Register = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setPasswordError('');
 
     if (!username || !email || !password || !confirmPassword) {
       return;
     }
 
     if (password !== confirmPassword) {
+      setPasswordError('Şifreler eşleşmiyor. Lütfen aynı şifreyi girin.');
+      toast.error('Şifreler eşleşmiyor. Lütfen aynı şifreyi girin.');
       return;
     }
 
@@ -90,11 +95,22 @@ const Register = () => {
               type="password"
               id="confirmPassword"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                if (passwordError && password === e.target.value) {
+                  setPasswordError('');
+                }
+              }}
               placeholder="Şifrenizi tekrar girin"
               required
               minLength={6}
+              style={{ borderColor: passwordError ? '#dc3545' : undefined }}
             />
+            {passwordError && (
+              <div style={{ color: '#dc3545', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                {passwordError}
+              </div>
+            )}
           </div>
 
           <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
