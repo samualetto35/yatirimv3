@@ -743,92 +743,82 @@ const AdminPerformance = () => {
     const container = userBalanceChartRef.current;
     if (!container) return;
 
-    let chart = null;
-    let timer = null;
+    const top20 = top10Percent.slice(0, 20).filter(u => Number(u.balance) > 0);
+    if (top20.length === 0) return;
 
-    // Wait for container to be ready
-    timer = setTimeout(() => {
-      if (!container || !container.parentElement) return;
+    const labels = top20.map(u => u.username || 'N/A');
+    const values = top20.map(u => Number(u.balance) || 0);
 
-      const top20 = top10Percent.slice(0, 20);
-      if (top20.length === 0) return;
+    const x = labels.map((_, i) => i);
+    const y = values;
 
-      const labels = top20.map(u => u.username || 'N/A');
-      const values = top20.map(u => Number(u.balance) || 0).filter(v => v > 0);
+    const width = Math.max(400, container.clientWidth || 400);
+    const height = 300;
 
-      if (values.length === 0) return;
-
-      const x = values.map((_, i) => i);
-      const y = values;
-
-      const width = Math.max(400, container.clientWidth || 400);
-      const height = 300;
-
-      const opts = {
-        width,
-        height,
-        series: [
-          { label: 'User' },
-          { 
-            label: 'Balance',
-            stroke: '#8b5cf6',
-            fill: 'rgba(139, 92, 246, 0.1)',
-            width: 2,
-            points: { show: true, size: 4 }
-          }
-        ],
-        axes: [
-          {
-            show: true,
-            stroke: '#e5e7eb',
-            grid: { show: true, stroke: '#f3f4f6' },
-            ticks: { show: true, stroke: '#9ca3af' },
-            side: 2,
-            labelGap: 8,
-            labelSize: 11,
-            labelFont: '11px system-ui',
-            label: 'Kullanıcı',
-            space: (u, seriesIdx, scaleMin, scaleMax, plotDim) => {
-              const maxLabelWidth = Math.max(...labels.map(l => (l.length || 0) * 6));
-              return Math.max(50, maxLabelWidth);
-            },
-            values: (u, vals) => vals.map(v => labels[Math.round(v)] || '')
-          },
-          {
-            show: true,
-            stroke: '#e5e7eb',
-            grid: { show: true, stroke: '#f3f4f6' },
-            ticks: { show: true, stroke: '#9ca3af' },
-            side: 3,
-            labelGap: 8,
-            labelSize: 11,
-            labelFont: '11px system-ui',
-            label: 'Bakiye (₺)',
-            format: (u, val) => {
-              if (val >= 1e6) return `₺${(val / 1e6).toFixed(1)}M`;
-              if (val >= 1e3) return `₺${(val / 1e3).toFixed(0)}k`;
-              return `₺${val.toFixed(0)}`;
-            }
-          }
-        ],
-        legend: { show: false },
-        padding: [12, 12, 8, 8],
-        cursor: { show: true, lock: true },
-        scales: {
-          x: { time: false },
-          y: { auto: true }
+    const opts = {
+      width,
+      height,
+      series: [
+        { label: 'User' },
+        { 
+          label: 'Balance',
+          stroke: '#8b5cf6',
+          fill: 'rgba(139, 92, 246, 0.1)',
+          width: 2,
+          points: { show: true, size: 4 }
         }
-      };
-
-      try {
-        chart = new uPlot(opts, [x, y], container);
-      } catch (e) {
-        console.error('Chart error:', e);
+      ],
+      axes: [
+        {
+          show: true,
+          stroke: '#e5e7eb',
+          grid: { show: true, stroke: '#f3f4f6' },
+          ticks: { show: true, stroke: '#9ca3af' },
+          side: 2,
+          labelGap: 8,
+          labelSize: 11,
+          labelFont: '11px system-ui',
+          label: 'Kullanıcı',
+          space: (u, seriesIdx, scaleMin, scaleMax, plotDim) => {
+            const maxLabelWidth = Math.max(...labels.map(l => (l.length || 0) * 6));
+            return Math.max(50, maxLabelWidth);
+          },
+          values: (u, vals) => vals.map(v => labels[Math.round(v)] || '')
+        },
+        {
+          show: true,
+          stroke: '#e5e7eb',
+          grid: { show: true, stroke: '#f3f4f6' },
+          ticks: { show: true, stroke: '#9ca3af' },
+          side: 3,
+          labelGap: 8,
+          labelSize: 11,
+          labelFont: '11px system-ui',
+          label: 'Bakiye (₺)',
+          format: (u, val) => {
+            if (val >= 1e6) return `₺${(val / 1e6).toFixed(1)}M`;
+            if (val >= 1e3) return `₺${(val / 1e3).toFixed(0)}k`;
+            return `₺${val.toFixed(0)}`;
+          }
+        }
+      ],
+      legend: { show: false },
+      padding: [12, 12, 8, 8],
+      cursor: { show: true, lock: true },
+      scales: {
+        x: { time: false },
+        y: { auto: true }
       }
-    }, 100);
+    };
+
+    let chart = null;
+    try {
+      chart = new uPlot(opts, [x, y], container);
+    } catch (e) {
+      console.error('Chart error:', e);
+    }
 
     return () => {
-      if (timer) clearTimeout(timer);
       if (chart) {
         try {
           chart.destroy();
