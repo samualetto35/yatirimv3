@@ -49,11 +49,11 @@ const MarketOverview = () => {
       ) : (
         <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <div style={{ minWidth: 420 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, background: '#f8fafc', border: '1px solid #eef2f7', color: '#6b7280', fontWeight: 800, fontSize: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 110px 1fr 1fr', gap: 10, padding: '8px 10px', borderRadius: 12, background: '#f8fafc', border: '1px solid #eef2f7', color: '#6b7280', fontWeight: 800, fontSize: 12 }}>
               <div>Pair</div>
+              <div style={{ textAlign: 'right' }}>Return</div>
               <div>Open</div>
               <div>Close</div>
-              <div style={{ textAlign: 'right' }}>Return</div>
             </div>
             <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
               {instruments.map(({ symbol, data }) => {
@@ -63,19 +63,20 @@ const MarketOverview = () => {
                 const col = pct > 0 ? 'green' : (pct < 0 ? 'red' : 'gray');
                 const instrument = getInstrumentByCode(symbol);
                 const fullName = instrument?.fullName || instrument?.name || symbol;
+                const openCloseStyle = { fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500 };
                 return (
-                  <div key={symbol} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 1fr 1fr 110px', gap: 10, padding: '8px 10px', borderRadius: 12, border: '1px solid #eef2f7', background: '#ffffff', alignItems: 'center' }}>
-                    <div style={{ minWidth: 0 }}>
+                  <div key={symbol} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) 110px 1fr 1fr', gap: 10, padding: '8px 10px', borderRadius: 12, border: '1px solid #eef2f7', background: '#ffffff', alignItems: 'center' }}>
+                    <div style={{ minWidth: 0, overflow: 'hidden' }}>
                       <div style={{ fontWeight: 900, fontSize: '0.875rem' }}>{symbol}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fullName}>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch' }} title={fullName}>
                         {fullName}
                       </div>
                     </div>
-                    <div style={{ color: '#111827', fontWeight: 500 }}>{open != null ? `$${open.toFixed(2)}` : '—'}</div>
-                    <div style={{ color: '#111827', fontWeight: 500 }}>{close != null ? `$${close.toFixed(2)}` : '—'}</div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <Badge color={col}>{Number.isFinite(pct) ? pct.toFixed(2) : '—'}%</Badge>
                     </div>
+                    <div style={openCloseStyle}>{open != null ? `$${open.toFixed(2)}` : '—'}</div>
+                    <div style={openCloseStyle}>{close != null ? `$${close.toFixed(2)}` : '—'}</div>
                   </div>
                 );
               })}

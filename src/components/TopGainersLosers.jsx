@@ -8,19 +8,17 @@ const Row = ({ rank, symbol, pct, isAllocated }) => {
   const positive = Number(pct) >= 0;
   const instrument = getInstrumentByCode(symbol);
   const fullName = instrument?.fullName || instrument?.name || symbol;
-  
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderRadius: 10, border: '1px solid #eef2f7', background: isAllocated ? '#f1f3f5' : '#ffffff' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-        <span style={{ minWidth: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', border: '1px solid #e5e7eb', fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{rank}</span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-          <span style={{ fontWeight: 800, fontSize: '0.875rem' }}>{symbol}</span>
-          <span style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fullName}>
-            {fullName}
-          </span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, border: '1px solid #eef2f7', background: isAllocated ? '#f1f3f5' : '#ffffff', minWidth: 0 }}>
+      <span style={{ minWidth: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', border: '1px solid #e5e7eb', fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{rank}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1, overflow: 'hidden' }}>
+        <span style={{ fontWeight: 800, fontSize: '0.875rem' }}>{symbol}</span>
+        <div style={{ fontSize: '0.75rem', color: '#6b7280', overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch' }} title={fullName}>
+          {fullName}
         </div>
       </div>
-      <span style={{ fontWeight: 800, color: positive ? '#16a34a' : '#dc2626', flexShrink: 0 }}>{Number(pct).toFixed(2)}%</span>
+      <span style={{ fontWeight: 800, fontSize: '0.875rem', color: positive ? '#16a34a' : '#dc2626', flexShrink: 0 }}>{Number(pct).toFixed(2)}%</span>
     </div>
   );
 };
@@ -97,18 +95,18 @@ const TopGainersLosers = ({ limit = 5 }) => {
         <p style={{ color: '#dc2626' }}>{error}</p>
       ) : (
         <div className="tgl-cols" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minWidth: 0 }}>
-          <div className="tgl-col gainers">
+          <div className="tgl-col gainers" style={{ minWidth: 0 }}>
             <div style={{ color: '#6b7280', fontSize: 12, fontWeight: 800, marginBottom: 6 }}>En Çok Yükselenler</div>
-            <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
               {gainers.map((g, i) => (
                 <Row key={`g_${g.symbol}`} rank={i + 1} symbol={g.symbol} pct={g.pct} isAllocated={allocSymsMemo.has(g.symbol)} />
               ))}
               {!gainers.length && <div style={{ color: '#6c757d', fontSize: 12 }}>Veri yok</div>}
             </div>
           </div>
-          <div className="tgl-col losers">
+          <div className="tgl-col losers" style={{ minWidth: 0 }}>
             <div style={{ color: '#6b7280', fontSize: 12, fontWeight: 800, marginBottom: 6 }}>En Çok Değer Kaybedenler</div>
-            <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
               {losers.map((g, i) => (
                 <Row key={`l_${g.symbol}`} rank={i + 1} symbol={g.symbol} pct={g.pct} isAllocated={allocSymsMemo.has(g.symbol)} />
               ))}
