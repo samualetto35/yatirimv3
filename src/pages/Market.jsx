@@ -14,6 +14,7 @@ const Market = () => {
   const [openIdx, setOpenIdx] = useState(null);
   const [loading, setLoading] = useState(true);
   const [allocSymsByWeek, setAllocSymsByWeek] = useState({}); // weekId -> Set(symbol)
+  const [allocWeightsByWeek, setAllocWeightsByWeek] = useState({}); // weekId -> { symbol: weight (0-1) }
 
   useEffect(() => {
     (async () => {
@@ -41,25 +42,30 @@ const Market = () => {
     })();
   }, []);
 
-  // Load current user's allocations (for row highlighting)
+  // Load current user's allocations (for row highlighting + weight column)
   useEffect(() => {
     let mounted = true;
     (async () => {
       if (!currentUser) {
-        if (mounted) setAllocSymsByWeek({});
+        if (mounted) { setAllocSymsByWeek({}); setAllocWeightsByWeek({}); }
         return;
       }
       try {
         const allocs = await getUserAllocations(currentUser.uid, 260);
         if (!mounted) return;
-        const map = {};
+        const symsMap = {};
+        const weightsMap = {};
         allocs.forEach(a => {
-          const entries = Object.entries(a?.pairs || {}).filter(([, w]) => Number(w) > 0);
-          map[a.weekId] = new Set(entries.map(([k]) => k));
+          const pairs = a?.pairs || {};
+          const entries = Object.entries(pairs).filter(([, w]) => Number(w) > 0);
+          symsMap[a.weekId] = new Set(entries.map(([k]) => k));
+          weightsMap[a.weekId] = {};
+          entries.forEach(([k, w]) => { weightsMap[a.weekId][k] = Number(w); });
         });
-        setAllocSymsByWeek(map);
+        setAllocSymsByWeek(symsMap);
+        setAllocWeightsByWeek(weightsMap);
       } catch {
-        if (mounted) setAllocSymsByWeek({});
+        if (mounted) { setAllocSymsByWeek({}); setAllocWeightsByWeek({}); }
       }
     })();
     return () => { mounted = false; };
@@ -93,6 +99,7 @@ const Market = () => {
             const opened = openIdx === idx;
             const pairs = Object.keys(m).filter(k => typeof m[k] === 'object' && (m[k]?.open != null || m[k]?.close != null));
             const allocSyms = allocSymsByWeek[row.id];
+            const allocWeights = allocWeightsByWeek[row.id] || {};
             return (
               <div key={row.id} style={{ border: '1px solid #e9ecef', borderRadius: 12, marginBottom: 8, overflow: 'hidden' }}>
                 <button
@@ -113,14 +120,16 @@ const Market = () => {
                   <div style={{ borderTop: '1px solid #f1f3f5', padding: '10px 12px' }}>
                     {pairs.length ? (
                       <div style={{ display: 'grid', gap: 8 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr 70px', gap: 8 }}>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Pair</div>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Open</div>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Close</div>
                           <div style={{ fontWeight: 700, color: '#6c757d' }}>Return</div>
+                          <div style={{ fontWeight: 700, color: '#6c757d', textAlign: 'right' }}>Ağırlık</div>
                         </div>
                         {pairs.map(sym => {
                           const allocated = !!allocSyms && allocSyms.has(sym);
+                          const weight = allocWeights[sym];
                           const instrument = getInstrumentByCode(sym);
                           const fullName = instrument?.fullName || instrument?.name || sym;
                           return (
@@ -128,7 +137,7 @@ const Market = () => {
                               key={`${row.id}_${sym}_row`}
                               style={{
                                 display: 'grid',
-                                gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr',
+                                gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr 70px',
                                 gap: 8,
                                 padding: '8px 10px',
                                 borderRadius: 10,
@@ -146,6 +155,9 @@ const Market = () => {
                               <div>${m[sym]?.close != null ? Number(m[sym].close).toFixed(2) : '—'}</div>
                               <div style={{ color: Number(m[sym]?.returnPct || 0) >= 0 ? '#16a34a' : '#dc2626', fontWeight: 800 }}>
                                 {m[sym]?.returnPct != null ? `${Number(m[sym].returnPct).toFixed(2)}%` : '—'}
+                              </div>
+                              <div style={{ textAlign: 'right', fontWeight: 600, color: allocated && weight != null ? '#374151' : '#9ca3af' }}>
+                                {allocated && weight != null ? `${(weight * 100).toFixed(0)}%` : '—'}
                               </div>
                             </div>
                           );
