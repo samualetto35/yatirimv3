@@ -235,115 +235,193 @@ const Announcements = () => {
     return filtered.filter(a => !a.hidden);
   }, [rows, filter, isAdmin]);
 
+  // Duyuru gövdesi: satır sonları ve boşluklar korunur (mail gibi)
+  const formatBody = (text) => {
+    if (!text) return null;
+    return (
+      <div
+        style={{
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          lineHeight: 1.6,
+          fontSize: 14,
+          color: '#374151',
+          fontFamily: 'inherit',
+        }}
+      >
+        {text}
+      </div>
+    );
+  };
+
+  const previewSnippet = (body, maxLen = 120) => {
+    const t = (body || '').trim().replace(/\s+/g, ' ');
+    return t.length <= maxLen ? t : t.slice(0, maxLen) + '…';
+  };
+
   return (
-    <div className="info-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>Duyurular</h3>
+    <div className="info-card" style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontWeight: 700, fontSize: 18 }}>Duyurular</h3>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Ara "
+            placeholder="Duyurularda ara…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            style={{ border: '1px solid #ced4da', borderRadius: 12, padding: '8px 10px', fontWeight: 600, width: 240 }}
+            style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: 14, width: 220, background: '#fafafa' }}
           />
           {isAdmin && (
             <button
               type="button"
               className="btn-chip primary"
               onClick={() => { setShowComposer(true); setCreateError(''); }}
+              style={{ padding: '8px 14px', fontSize: 13 }}
             >Yeni Duyuru</button>
           )}
         </div>
       </div>
-      {loading ? <p style={{ color: '#6c757d' }}>Yükleniyor…</p> : (
-        visibleRows.length ? visibleRows.map(a => {
-          const isOpen = !!expanded[a.id];
-          const preview = (a.body || '').slice(0, 180);
-          return (
-            <div key={a.id} className="info-item" style={{ alignItems: 'start', opacity: a.hidden ? 0.6 : 1 }}>
-              <div style={{ flex: 1 }}>
-                {/* Title */}
-                <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>
-                  {a.title || 'Başlıksız'}
-                  {a.hidden && <span className="chip-pill" style={{ background: '#fff7ed', color: '#b45309', fontSize: 11, marginLeft: 8 }}>Gizli</span>}
-                </div>
-                
-                {/* Tags - right after title */}
-                {(a.tags || []).length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
-                    {(a.tags || []).map((t, idx) => {
-                      const tagColors = a.tagColors || {};
-                      const color = tagColors[t] || colorPalette[0].hex;
-                      const bgColor = hexToRgba(color, 0.15);
-                      return (
-                        <span 
-                          key={idx} 
-                          className="chip-pill" 
-                          style={{ 
-                            background: bgColor, 
-                            color: color, 
-                            fontSize: 11,
-                            fontWeight: 700,
-                            border: `1px solid ${hexToRgba(color, 0.3)}`
-                          }}
-                        >
-                          {t}
+      {loading ? (
+        <p style={{ color: '#6b7280', fontSize: 14 }}>Yükleniyor…</p>
+      ) : visibleRows.length ? (
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden', background: '#fff' }}>
+          {visibleRows.map((a, index) => {
+            const isOpen = !!expanded[a.id];
+            const hasMore = (a.body || '').length > 120;
+            return (
+              <div
+                key={a.id}
+                style={{
+                  borderBottom: index < visibleRows.length - 1 ? '1px solid #f3f4f6' : 'none',
+                  background: isOpen ? '#fafafa' : 'transparent',
+                  opacity: a.hidden ? 0.7 : 1,
+                }}
+              >
+                {/* Satır: başlık + meta (Gmail liste satırı gibi) */}
+                <button
+                  type="button"
+                  onClick={() => { toggleExpand(a.id); if (!expanded[a.id]) markRead(a.id); }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '14px 16px',
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    display: 'block',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 15, color: '#111827' }}>
+                          {a.title || 'Başlıksız'}
                         </span>
-                      );
-                    })}
+                        {a.hidden && (
+                          <span style={{ background: '#fff7ed', color: '#b45309', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 6 }}>Gizli</span>
+                        )}
+                        {(a.tags || []).length > 0 && (
+                          <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                            {(a.tags || []).map((t, idx) => {
+                              const tagColors = a.tagColors || {};
+                              const color = tagColors[t] || colorPalette[0].hex;
+                              const bgColor = hexToRgba(color, 0.15);
+                              return (
+                                <span
+                                  key={idx}
+                                  style={{
+                                    background: bgColor,
+                                    color: color,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    border: `1px solid ${hexToRgba(color, 0.3)}`,
+                                  }}
+                                >
+                                  {t}
+                                </span>
+                              );
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 10, letterSpacing: '0.01em' }}>
+                        {a.createdByEmail || a.createdBy || '—'} · {a.createdAt?.toDate?.()?.toLocaleString?.('tr-TR') || timeAgo(a.createdAt)}
+                      </div>
+                      {!isOpen && (
+                        <div style={{ fontSize: 14, color: '#4b5563', lineHeight: 1.5, marginTop: 2 }}>
+                          {previewSnippet(a.body)}
+                        </div>
+                      )}
+                    </div>
+                    {hasMore && (
+                      <span style={{ flexShrink: 0, fontSize: 12, color: '#3b82f6', fontWeight: 600 }}>
+                        {isOpen ? '▲ Gizle' : '▼ Devamını oku'}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                {/* Açılmış: mail gibi gövde alanı */}
+                {isOpen && (
+                  <div style={{ padding: '0 16px 20px 16px', marginLeft: 0, borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ padding: '18px 20px', background: '#fff', borderRadius: 10, border: '1px solid #e5e7eb', marginTop: 14 }}>
+                      {formatBody(a.body)}
+                      {a.link && (
+                        <div style={{ marginTop: 14 }}>
+                          <a href={a.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 14, color: '#2563eb', fontWeight: 600 }}>
+                            {a.link}
+                          </a>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
-                <div style={{ color: '#4b5563', marginTop: 6, lineHeight: 1.5 }}>
-                  {isOpen ? (a.body || '') : preview}
-                  {(a.body || '').length > preview.length && (
-                    <button onClick={() => { toggleExpand(a.id); markRead(a.id); }} className="btn-chip ghost" style={{ padding: '4px 8px', marginLeft: 6 }}>
-                      {isOpen ? 'Gizle' : 'Devamını Oku'}
-                    </button>
-                  )}
-                </div>
-                <div style={{ color: '#94a3b8', fontSize: 7, marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span>{a.createdByEmail || a.createdBy || ''}</span>
-                  <span>·</span>
-                  <span>{a.createdAt?.toDate?.()?.toLocaleString?.('tr-TR') || timeAgo(a.createdAt)}</span>
-                  {a.link && (
-                    <a href={a.link} target="_blank" rel="noopener noreferrer" className="btn-chip" style={{ padding: '4px 8px', fontSize: 12 }}>Bağlantı</a>
-                  )}
-                </div>
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '8px 16px 12px', background: isOpen ? '#fafafa' : 'transparent', borderTop: isOpen ? '1px solid #f3f4f6' : 'none' }}>
+                    <button
+                      type="button"
+                      className="btn-chip"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      onClick={() => {
+                        setEditError('');
+                        setEditData({
+                          id: a.id,
+                          title: a.title || '',
+                          body: a.body || '',
+                          link: a.link || '',
+                          tags: a.tags || [],
+                          tagColors: a.tagColors || {},
+                          hidden: !!a.hidden,
+                        });
+                        setEditTagInput('');
+                        setEditOpen(true);
+                      }}
+                    >Düzenle</button>
+                    <button
+                      type="button"
+                      className="btn-chip"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      onClick={() => {
+                        if (confirm(a.hidden ? 'Duyuruyu herkese gösterilsin mi?' : 'Duyuru gizlensin mi?')) toggleHidden(a.id, !a.hidden);
+                      }}
+                    >{a.hidden ? 'Göster' : 'Gizle'}</button>
+                    <button
+                      type="button"
+                      className="btn-chip ghost"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      onClick={() => {
+                        if (confirm('Duyuruyu silmek istediğinize emin misiniz?')) onDelete(a.id);
+                      }}
+                    >Sil</button>
+                  </div>
+                )}
               </div>
-              {isAdmin && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', marginRight: 8 }}>
-                  <button
-                    className="btn-chip"
-                    style={{ padding: '4px 8px', fontSize: 12 }}
-                    onClick={() => {
-                      setEditError('');
-                      setEditData({
-                        id: a.id,
-                        title: a.title || '',
-                        body: a.body || '',
-                        link: a.link || '',
-                        tags: a.tags || [],
-                        tagColors: a.tagColors || {},
-                        hidden: !!a.hidden,
-                      });
-                      setEditTagInput('');
-                      setEditOpen(true);
-                    }}
-                  >Düzenle</button>
-                  <button className="btn-chip" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => {
-                    if (confirm(a.hidden ? 'Duyuruyu herkese gösterilsin mi?' : 'Duyuru gizlensin mi?')) toggleHidden(a.id, !a.hidden);
-                  }}>{a.hidden ? 'Göster' : 'Gizle'}</button>
-                  <button className="btn-chip ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => {
-                    if (confirm('Duyuruyu silmek istediğinize emin misiniz?')) onDelete(a.id);
-                  }}>Sil</button>
-                </div>
-              )}
-            </div>
-          );
-        }) : (
-          loadError ? <p style={{ color: '#dc2626' }}>Duyurular yüklenemedi: {loadError}</p> : <p style={{ color: '#6c757d' }}>Henüz duyuru yok.</p>
-        )
+            );
+          })}
+        </div>
+      ) : (
+        loadError ? <p style={{ color: '#dc2626', fontSize: 14 }}>Duyurular yüklenemedi: {loadError}</p> : <p style={{ color: '#6b7280', fontSize: 14 }}>Henüz duyuru yok.</p>
       )}
       {isAdmin && showComposer && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
