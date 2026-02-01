@@ -8,7 +8,8 @@ import {
   sendPasswordResetEmail,
   updateProfile
 } from 'firebase/auth';
-import { auth } from '../firebase/config';
+import { auth, db } from '../firebase/config';
+import { doc, getDoc } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import { createUserDocument, ensureUserDocument, updateEmailVerificationStatus, getUserDocument } from '../services/userService';
 
@@ -25,6 +26,7 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userDocLoading, setUserDocLoading] = useState(false);
 
@@ -276,18 +278,25 @@ export const AuthProvider = ({ children }) => {
       // Only set user as current if email is verified
       if (user && user.emailVerified) {
         setCurrentUser(user);
-        
+        // Check adminUsers for Analizler tab visibility
+        try {
+          const snap = await getDoc(doc(db, 'adminUsers', user.uid));
+          setIsAdmin(snap.exists());
+        } catch {
+          setIsAdmin(false);
+        }
         // Ensure user document exists in Firestore
         await ensureUserDocLoaded(user);
       } else if (user && !user.emailVerified) {
-        // User exists but not verified - don't set as current user
         setCurrentUser(null);
         setUserDoc(null);
         setUserDocLoading(false);
+        setIsAdmin(false);
       } else {
         setCurrentUser(null);
         setUserDoc(null);
         setUserDocLoading(false);
+        setIsAdmin(false);
       }
       setLoading(false);
     });
@@ -299,6 +308,7 @@ export const AuthProvider = ({ children }) => {
     currentUser,
     userDoc,
     userDocLoading,
+    isAdmin,
     ensureUserDocLoaded,
     register,
     login,

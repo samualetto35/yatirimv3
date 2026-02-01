@@ -1,24 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase/config';
 
-const tabs = [
+const allTabs = [
   { key: 'overview', label: 'Dashboard' },
   { key: 'history', label: 'Geçmiş' },
   { key: 'leaderboard', label: 'Sıralama' },
   { key: 'announcements', label: 'Duyurular' },
   { key: 'market', label: 'Piyasa' },
+  { key: 'analizler', label: 'Analizler' },
   { key: 'profile', label: 'Profil' },
 ];
 
 const TopTabs = ({ active, onChange }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, isAdmin } = useAuth();
   const [stylePref, setStylePref] = useState(() => {
     if (typeof window === 'undefined') return 'modern';
     return localStorage.getItem('topTabsStyle') || 'modern';
   });
   const [hasUnreadAnnouncements, setHasUnreadAnnouncements] = useState(false);
+
+  const tabs = useMemo(() => {
+    return isAdmin ? allTabs : allTabs.filter((t) => t.key !== 'analizler');
+  }, [isAdmin]);
 
   useEffect(() => {
     const handler = () => {

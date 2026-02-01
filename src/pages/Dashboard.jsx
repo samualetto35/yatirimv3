@@ -18,10 +18,11 @@ import TVTickerTape from '../components/TVTickerTape';
 import Announcements from './Announcements';
 import History from './History';
 import Market from './Market';
+import Analizler from './Analizler';
 import Profile from './Profile';
 
 const Dashboard = () => {
-  const { currentUser, userDoc, userDocLoading, ensureUserDocLoaded } = useAuth();
+  const { currentUser, userDoc, userDocLoading, ensureUserDocLoaded, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
   const [isInitializing, setIsInitializing] = useState(true);
@@ -29,7 +30,11 @@ const Dashboard = () => {
   const loadingStartTimeRef = useRef(null);
   const hasCheckedFirstLoginRef = useRef(false);
   const isFirstLoginRef = useRef(false);
-  // Static overview order (drag/drop removed for simplicity)
+
+  // Analizler sadece admin için; admin değilse analizler sekmesindeyse overview'a al
+  useEffect(() => {
+    if (activeTab === 'analizler' && !isAdmin) setActiveTab('overview');
+  }, [activeTab, isAdmin]);
 
   // Extra security check on mount and when currentUser changes
   useEffect(() => {
@@ -179,6 +184,7 @@ const Dashboard = () => {
             {activeTab === 'announcements' && <Announcements />}
             {activeTab === 'history' && <History />}
             {activeTab === 'market' && <Market />}
+            {activeTab === 'analizler' && isAdmin && <Analizler />}
             {activeTab === 'leaderboard' && (
               <div className="leaderboard-wrap">
                 <Ranking />
@@ -291,6 +297,7 @@ const Dashboard = () => {
         {activeTab === 'announcements' && <Announcements />}
         {activeTab === 'history' && <History />}
         {activeTab === 'market' && <Market />}
+        {activeTab === 'analizler' && isAdmin && <Analizler />}
         {activeTab === 'leaderboard' && (
           <div className="leaderboard-wrap">
             <Ranking />

@@ -201,6 +201,18 @@ const AllocationForm = () => {
         <p style={{ color: '#6c757d' }}>Allocation window is not open.</p>
       ) : (
         <form onSubmit={onSubmit} className="auth-form">
+          {existing && (
+            <div style={{ 
+              background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+              borderRadius: 12, 
+              padding: '12px 16px', 
+              border: '1px solid #93c5fd',
+              marginBottom: 16
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#1e40af' }}>You have an existing allocation</div>
+              <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 4 }}>Submitting will completely replace your previous selection.</div>
+            </div>
+          )}
           {rows.map((row, idx) => (
             <div key={`row_${idx}`} className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 140px auto', gap: 10, alignItems: 'start' }}>
               <PairSelect
@@ -248,11 +260,20 @@ const AllocationForm = () => {
               + Add Pair
             </button>
           </div>
-          <p style={{ color: total !== 100 ? '#dc3545' : '#6c757d' }}>Weights must total 100%. Current total: {total}%</p>
-          {existing && (
-            <p style={{ color: '#6c757d', marginBottom: 8 }}>You already submitted an allocation for this week. Submitting again will update your weights.</p>
-          )}
-          <button type="submit" className="btn btn-primary" disabled={disabled}>{submitting ? 'Submitting...' : (existing ? 'Update Allocation' : 'Submit Allocation')}</button>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            padding: '12px 16px', 
+            borderRadius: 12,
+            background: total === 100 ? '#f0fdf4' : (total > 100 ? '#fef2f2' : '#fffbeb'),
+            border: `1px solid ${total === 100 ? '#bbf7d0' : (total > 100 ? '#fecaca' : '#fde68a')}`,
+            marginTop: 12
+          }}>
+            <span style={{ color: total !== 100 ? '#dc3545' : '#16a34a', fontWeight: 600 }}>Total: {total}%</span>
+            <span style={{ fontSize: 12, color: '#6c757d' }}>{total === 100 ? 'Ready to submit' : 'Must equal 100%'}</span>
+          </div>
+          <button type="submit" className="btn btn-primary" disabled={disabled} style={{ marginTop: 12, width: '100%' }}>{submitting ? 'Submitting...' : (existing ? 'Replace Allocation' : 'Submit Allocation')}</button>
         </form>
       )}
       {submitting && (

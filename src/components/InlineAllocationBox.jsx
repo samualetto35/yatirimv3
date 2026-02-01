@@ -279,13 +279,81 @@ const InlineAllocationBox = () => {
         </div>
       </div>
       {expanded && (
-        <div style={{ marginTop: 10, border: '1px solid #e9ecef', borderRadius: 16, padding: '12px', background: '#fff' }}>
+        <div style={{ marginTop: 12, border: '1px solid #e5e7eb', borderRadius: 20, padding: '20px', background: '#fff', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
           {loading ? (
-            <p style={{ color: '#6c757d', fontSize: 13 }}>Yükleniyor…</p>
+            <p style={{ color: '#6c757d', fontSize: 14 }}>Yükleniyor…</p>
           ) : (
-            <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 16 }}>
+              {hasExisting && (
+                <div style={{ 
+                  background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+                  borderRadius: 12, 
+                  padding: '12px 16px', 
+                  border: '1px solid #93c5fd',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10
+                }}>
+                  <span style={{ fontSize: 18 }}>ℹ️</span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1e40af' }}>Mevcut yatırımınız var</div>
+                    <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 2 }}>Yeni seçim kaydedildiğinde önceki seçim tamamen değiştirilecektir.</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Selected summary - only instruments with weight > 0 */}
+              {rows.filter(r => numberOrZero(r.weight) > 0).length > 0 && (
+                <div style={{ 
+                  background: '#f8fafc', 
+                  borderRadius: 12, 
+                  padding: '12px 16px',
+                  border: '1px solid #e2e8f0'
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Seçimleriniz
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    {rows.filter(r => numberOrZero(r.weight) > 0).map(r => {
+                      const opt = pairOptions.find(p => p.symbol === r.symbol);
+                      return (
+                        <div key={r.symbol} style={{ 
+                          display: 'inline-flex', 
+                          alignItems: 'center', 
+                          gap: 6, 
+                          background: '#fff', 
+                          padding: '6px 12px', 
+                          borderRadius: 10, 
+                          border: '1px solid #e2e8f0',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                        }}>
+                          <span style={{ fontWeight: 800, fontSize: 13, color: '#0f172a' }}>{opt?.categoryIcon} {r.symbol}</span>
+                          <span style={{ fontWeight: 700, fontSize: 13, color: '#0d6efd' }}>{r.weight}%</span>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setRows([{ symbol: 'XU100', weight: '' }])}
+                      style={{
+                        background: 'transparent',
+                        border: '1px dashed #94a3b8',
+                        color: '#64748b',
+                        padding: '6px 12px',
+                        borderRadius: 10,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Tümünü temizle
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Filter bar */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 0 }}>
                 {categories.map(c => (
                   <button key={c} type="button" onClick={() => setCat(c)}
                     style={{ 
@@ -320,11 +388,11 @@ const InlineAllocationBox = () => {
 
               {/* All instruments list */}
               <div style={{ 
-                maxHeight: '60vh', 
+                maxHeight: '55vh', 
                 overflowY: 'auto',
-                border: '1px solid #f1f3f5',
-                borderRadius: 12,
-                padding: 8
+                border: '1px solid #e5e7eb',
+                borderRadius: 14,
+                padding: 4
               }}>
                 {pairOptions.filter(p => {
                   const byCat = cat === 'Tümü' || p.categoryName === cat;
@@ -334,6 +402,7 @@ const InlineAllocationBox = () => {
                 }).map(opt => {
                   const existingRow = rows.find(r => r.symbol === opt.symbol);
                   const weight = existingRow ? existingRow.weight : '';
+                  const isSelected = numberOrZero(weight) > 0;
                   return (
                     <div 
                       key={opt.symbol} 
@@ -342,9 +411,12 @@ const InlineAllocationBox = () => {
                         gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) auto',
                         gap: isMobile ? 6 : 8,
                         alignItems: 'center',
-                        padding: isMobile ? '8px 6px' : '10px 8px',
-                        borderBottom: '1px solid #f1f3f5',
-                        fontSize: 12
+                        padding: isMobile ? '10px 10px' : '12px 12px',
+                        borderBottom: '1px solid #f1f5f9',
+                        fontSize: 13,
+                        background: isSelected ? 'linear-gradient(90deg, rgba(13,110,253,0.06) 0%, transparent 100%)' : 'transparent',
+                        borderRadius: 10,
+                        marginBottom: 4
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
@@ -401,12 +473,13 @@ const InlineAllocationBox = () => {
                             }}
                             style={{ 
                               width: '100%', 
-                              height: isMobile ? 32 : 36, 
-                              padding: '0 24px 0 8px', 
-                              borderRadius: 8, 
-                              border: '1px solid #ced4da', 
-                              fontSize: isMobile ? 12 : 13,
-                              textAlign: 'right'
+                              height: isMobile ? 36 : 40, 
+                              padding: '0 28px 0 12px', 
+                              borderRadius: 10, 
+                              border: isSelected ? '2px solid #0d6efd' : '1px solid #e2e8f0', 
+                              fontSize: isMobile ? 13 : 14,
+                              textAlign: 'right',
+                              fontWeight: 600
                             }}
                           />
                           <span style={{ 
@@ -434,44 +507,45 @@ const InlineAllocationBox = () => {
                 )}
               </div>
 
-              {/* Total percentage - prominent display */}
+              {/* Total percentage - prominent display with progress */}
               <div style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                padding: '12px 16px',
-                borderRadius: 12,
-                background: total === 100 ? '#f0fdf4' : (total > 100 ? '#fef2f2' : '#fffbeb'),
-                border: `2px solid ${total === 100 ? '#16a34a' : (total > 100 ? '#dc2626' : '#f59e0b')}`,
-                marginTop: 8
+                borderRadius: 14,
+                overflow: 'hidden',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0'
               }}>
-                <div>
-                  <div style={{ 
-                    fontWeight: 700, 
-                    fontSize: 12, 
-                    color: '#111827',
-                    marginBottom: 2
-                  }}>
-                    Toplam Yüzde
-                  </div>
-                  <div style={{ 
-                    fontSize: 10, 
-                    color: '#6c757d' 
-                  }}>
-                    {!canSave ? disabledReason : 'Yatırım yapabilirsiniz'}
-                  </div>
-                </div>
                 <div style={{ 
-                  fontSize: 24, 
-                  fontWeight: 800, 
-                  color: total === 100 ? '#16a34a' : (total > 100 ? '#dc2626' : '#f59e0b')
+                  height: 6, 
+                  background: total === 100 ? 'linear-gradient(90deg, #22c55e, #16a34a)' : (total > 100 ? 'linear-gradient(90deg, #ef4444, #dc2626)' : 'linear-gradient(90deg, #f59e0b, #eab308)'),
+                  width: `${Math.min(100, Math.max(0, total))}%`,
+                  transition: 'width 0.3s ease'
+                }} />
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  padding: '14px 18px'
                 }}>
-                  {total}%
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: '#334155', marginBottom: 2 }}>
+                      Toplam
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>
+                      {!canSave ? disabledReason : '✓ Yatırım yapabilirsiniz'}
+                    </div>
+                  </div>
+                  <div style={{ 
+                    fontSize: 28, 
+                    fontWeight: 800, 
+                    color: total === 100 ? '#16a34a' : (total > 100 ? '#dc2626' : '#d97706')
+                  }}>
+                    {total}%
+                  </div>
                 </div>
               </div>
 
               {/* Save button */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                 <button 
                   className={`btn-chip ${canSave ? 'primary' : 'ghost'}`} 
                   disabled={!canSave} 

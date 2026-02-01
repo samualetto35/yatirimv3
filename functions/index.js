@@ -861,14 +861,24 @@ exports.submitAllocation = functions.https.onCall(async (data, context) => {
   baseBalance = Number(baseBalance) || await ensureBalance(uid) || 100000;
 
   const ref = db.collection('allocations').doc(`${weekId}_${uid}`);
-  await ref.set({
-    uid,
-    weekId,
-    pairs,
-    baseBalance: Number(baseBalance), // Explicitly ensure it's a number
-    submittedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-  await logEvent({ category: 'allocation', action: 'submitAllocation', message: `Allocation submitted for ${weekId}`, data: { weekId, pairs }, user: { uid, email: context.auth.token.email } });
+  // REPLACE (not merge): full document overwrite so resubmissions replace previous allocation.
+  // With merge, nested "pairs" could accumulate (old + new keys => wrong totals).
+  const pairsOnly = Object.keys(pairs || {}).reduce((acc, k) => {
+    const v = Number(pairs[k]);
+    if (Number.isFinite(v) && v > 0) acc[k] = v;
+    return acc;
+  }, {});
+  await ref.set(
+    {
+      uid,
+      weekId,
+      pairs: pairsOnly,
+      baseBalance: Number(baseBalance),
+      submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: false }
+  );
+  await logEvent({ category: 'allocation', action: 'submitAllocation', message: `Allocation submitted for ${weekId}`, data: { weekId, pairs: pairsOnly }, user: { uid, email: context.auth.token.email } });
   return { ok: true };
 });
 
@@ -882,18 +892,35 @@ exports.onAuthCreate = functions.auth.user().onCreate(async (user) => {
 });
 
 // ---------- Admin callables for safe manual control ----------
-function assertAdmin(context) {
+async function assertAdmin(context) {
   if (!context.auth || !context.auth.token?.email_verified) {
     throw new functions.https.HttpsError('permission-denied', 'Auth required');
   }
   const email = context.auth.token.email || '';
-  if (!ADMIN_EMAILS.includes(email)) {
-    throw new functions.https.HttpsError('permission-denied', 'Not authorized');
+  const uid = context.auth.uid;
+  
+  // Check if user is in ADMIN_EMAILS list (legacy support)
+  if (ADMIN_EMAILS.includes(email)) {
+    return;
   }
+  
+  // Check if user exists in adminUsers collection
+  try {
+    const adminUserRef = db.collection('adminUsers').doc(uid);
+    const adminUserSnap = await adminUserRef.get();
+    if (adminUserSnap.exists) {
+      return;
+    }
+  } catch (error) {
+    console.warn('[assertAdmin] Error checking adminUsers collection:', error);
+  }
+  
+  // If neither check passes, deny access
+  throw new functions.https.HttpsError('permission-denied', 'Not authorized');
 }
 
 exports.adminCreateOrUpdateWeek = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await   await assertAdmin(context);
   const { weekId, status, openAt, closeAt, startDate, endDate, correctionMode, reason } = data || {};
   if (!weekId || !status) throw new functions.https.HttpsError('invalid-argument', 'weekId and status required');
   // Guard: only allow forward transitions unless in correctionMode with reason
@@ -923,7 +950,7 @@ exports.adminCreateOrUpdateWeek = functions.https.onCall(async (data, context) =
 });
 
 exports.adminCloseWeek = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await   await assertAdmin(context);
   const { weekId } = data || {};
   if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
   await upsertWeek(weekId, { status: 'closed' });
@@ -937,7 +964,7 @@ exports.adminFetchMarketData = functions
     memory: '512MB'
   })
   .https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   const { weekId } = data || {};
   const targetWeek = weekId || getISOWeekId();
   const marketRef = db.collection('marketData').doc(targetWeek);
@@ -1102,7 +1129,7 @@ exports.adminFetchMarketData = functions
 });
 
 exports.adminSetMarketCorrection = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   const { weekId, TSLA, AAPL, note } = data || {};
   if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
   const payload = {
@@ -1120,7 +1147,7 @@ exports.adminSetMarketCorrection = functions.https.onCall(async (data, context) 
 
 // Admin callable: Test Fintables fetching (SAFE - only updates TEFAS data, doesn't affect week status or Yahoo data)
 exports.adminTestFintables = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   const { weekId, dryRun = true } = data || {};
   
   // If no weekId provided, use current week
@@ -1395,7 +1422,7 @@ exports.triggerFetchTefasDataFromHangikredi = functions.https.onRequest(async (r
 });
 
 exports.adminTestHangikredi = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   const { weekId, dryRun = true } = data || {};
   
   // If no weekId provided, use current week
@@ -1540,7 +1567,7 @@ exports.adminTestHangikredi = functions.https.onCall(async (data, context) => {
 });
 
 exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await   await assertAdmin(context);
   const { weekId } = data || {};
   if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
 
@@ -1675,7 +1702,7 @@ exports.adminSettleWeek = functions.https.onCall(async (data, context) => {
 
 // Admin: Fix week status (e.g., if W02 is incorrectly marked as settled)
 exports.adminFixWeekStatus = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   const { weekId, newStatus } = data || {};
   if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
   if (!newStatus) throw new functions.https.HttpsError('invalid-argument', 'newStatus required');
@@ -1946,7 +1973,7 @@ async function recomputeFromWeek(weekId) {
 }
 
 exports.adminRecomputeFromWeek = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await   await assertAdmin(context);
   const { weekId } = data || {};
   if (!weekId) throw new functions.https.HttpsError('invalid-argument', 'weekId required');
   const res = await recomputeFromWeek(weekId);
@@ -2521,7 +2548,7 @@ exports.sendManualEmail = functions.https.onCall(async (data, context) => {
  * Admin: List all users
  */
 exports.adminListUsers = functions.https.onCall(async (data, context) => {
-  assertAdmin(context);
+  await assertAdmin(context);
   
   try {
     const usersSnap = await db.collection('users').get();
@@ -2803,7 +2830,7 @@ exports.adminGetPerformance = functions
   
   try {
     console.log('[adminGetPerformance] Calling assertAdmin...');
-    assertAdmin(context);
+    await assertAdmin(context);
     console.log('[adminGetPerformance] Admin check PASSED');
   } catch (e) {
     console.error('[adminGetPerformance] Admin check FAILED:', e.message);
