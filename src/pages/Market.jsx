@@ -119,15 +119,16 @@ const Market = () => {
                 {opened && (
                   <div style={{ borderTop: '1px solid #f1f3f5', padding: '10px 12px' }}>
                     {pairs.length ? (
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr 70px', gap: 8 }}>
-                          <div style={{ fontWeight: 700, color: '#6c757d' }}>Pair</div>
-                          <div style={{ fontWeight: 700, color: '#6c757d' }}>Open</div>
-                          <div style={{ fontWeight: 700, color: '#6c757d' }}>Close</div>
-                          <div style={{ fontWeight: 700, color: '#6c757d' }}>Return</div>
-                          <div style={{ fontWeight: 700, color: '#6c757d', textAlign: 'right' }}>Ağırlık</div>
-                        </div>
-                        {pairs.map(sym => {
+                      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', minWidth: 0 }}>
+                        <div style={{ display: 'grid', gap: 8, minWidth: 480 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1.5fr) 1fr 1fr 1fr 70px', gap: 8 }}>
+                            <div style={{ fontWeight: 700, color: '#6c757d' }}>Pair</div>
+                            <div style={{ fontWeight: 700, color: '#6c757d' }}>Open</div>
+                            <div style={{ fontWeight: 700, color: '#6c757d' }}>Close</div>
+                            <div style={{ fontWeight: 700, color: '#6c757d' }}>Return</div>
+                            <div style={{ fontWeight: 700, color: '#6c757d', textAlign: 'right' }}>Ağırlık</div>
+                          </div>
+                          {pairs.map(sym => {
                           const allocated = !!allocSyms && allocSyms.has(sym);
                           const weight = allocWeights[sym];
                           const instrument = getInstrumentByCode(sym);
@@ -162,6 +163,7 @@ const Market = () => {
                             </div>
                           );
                         })}
+                        </div>
                       </div>
                     ) : (
                       <div style={{ color: '#6c757d' }}>No market data.</div>
